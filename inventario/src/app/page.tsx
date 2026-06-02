@@ -1,4 +1,5 @@
 import { Package2, ArrowRight, Lock, Mail } from "lucide-react";
+import Link from "next/link";
 
 export default function Login() {
   return (
@@ -59,15 +60,15 @@ export default function Login() {
               <a href="#" className="text-blue-400 hover:text-blue-300 transition-colors">¿Olvidaste tu contraseña?</a>
             </div>
 
-            <button 
-              type="button" 
-              className="w-full relative group overflow-hidden bg-white text-black font-semibold rounded-xl py-3.5 transition-all duration-300 hover:shadow-[0_0_20px_rgba(255,255,255,0.3)] hover:scale-[1.02]"
+            <Link 
+              href="/dashboard"
+              className="w-full block text-center relative group overflow-hidden bg-white text-black font-semibold rounded-xl py-3.5 transition-all duration-300 hover:shadow-[0_0_20px_rgba(255,255,255,0.3)] hover:scale-[1.02]"
             >
               <span className="flex items-center justify-center gap-2">
                 Iniciar Sesión
                 <ArrowRight className="w-4 h-4 group-hover:translate-x-1 transition-transform" />
               </span>
-            </button>
+            </Link>
           </form>
 
         </div>
