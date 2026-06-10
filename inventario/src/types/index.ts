@@ -41,6 +41,17 @@ export interface Loan {
   status: 'active' | 'returned';
 }
 
+export interface Movement {
+  id: string;
+  productId: string;
+  type: 'consumption' | 'adjustment' | 'addition';
+  quantity: number;
+  requestedBy: string;
+  dispatchedBy: string;
+  date: string;
+  reason: string;
+}
+
 export interface Activity {
   id: string;
   type: 'loan_created' | 'loan_returned' | 'product_added' | 'product_updated' | 'stock_adjusted';
