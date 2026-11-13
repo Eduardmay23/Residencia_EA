@@ -1,28 +1,74 @@
 "use client";
 
-import { useState } from "react";
-import { ClipboardList, Search, Filter, Plus, Clock, ArrowDownRight, PackageMinus, Package2, Printer } from "lucide-react";
+import { useState, useEffect } from "react";
+import { Search, Plus, Clock, PackageMinus, Printer, Loader2, Database, AlertCircle } from "lucide-react";
 import Link from "next/link";
-
-const MOCK_LOANS = [
-  { id: "L-001", item: "MacBook Pro 16\"", sku: "LAP-MBP-001", user: "Ana Martínez", date: "2026-06-01", status: "active", type: "Préstamo" },
-  { id: "L-002", item: "Cámara Sony A7III", sku: "CAM-SNY-045", user: "Carlos López", date: "2026-05-28", status: "active", type: "Préstamo" },
-];
-
-const MOCK_CONSUMPTION = [
-  { id: "C-001", item: "Cartucho Tinta Negra HP", sku: "INK-HP-001", user: "Depto. Marketing", date: "2026-06-02", qty: 2, reason: "Impresión de volantes", type: "Consumo Local" },
-  { id: "C-002", item: "Resma Papel Bond", sku: "PAP-BND-500", user: "Depto. Finanzas", date: "2026-06-01", qty: 5, reason: "Reporte Mensual", type: "Consumo Local" },
-];
+import {
+  getLoans,
+  getConsumptions,
+  createLoan,
+  createConsumption,
+  returnLoan,
+  DbLoanItem,
+  DbConsumptionItem,
+} from "@/lib/services/loans";
+import { getProducts } from "@/lib/services/products";
+import { isSupabaseConfigured } from "@/lib/supabase/client";
+import { Product } from "@/types";
+import { useAuth } from "@/context/AuthContext";
+import AccessDenied from "@/components/AccessDenied";
 
 export default function Prestamos() {
+  const { isAdmin, canAccess, loading: authLoading } = useAuth();
   const [activeTab, setActiveTab] = useState<"prestamos" | "consumo">("prestamos");
   const [searchTerm, setSearchTerm] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [isDbConnected, setIsDbConnected] = useState(false);
 
-  const handlePrintVoucher = (type: "SALIDA" | "DEVOLUCIÓN" | "CONSUMO INTERNO", data: any) => {
-    const printWindow = window.open('', '_blank');
+  const [loans, setLoans] = useState<DbLoanItem[]>([]);
+  const [consumptions, setConsumptions] = useState<DbConsumptionItem[]>([]);
+  const [availableProducts, setAvailableProducts] = useState<Product[]>([]);
+
+  // Form states
+  const [movementType, setMovementType] = useState<"prestamo" | "consumo">("prestamo");
+  const [selectedProductId, setSelectedProductId] = useState("");
+  const [formUser, setFormUser] = useState("");
+  const [formQty, setFormQty] = useState(1);
+  const [formReason, setFormReason] = useState("");
+  const [isSaving, setIsSaving] = useState(false);
+
+  useEffect(() => {
+    async function loadData() {
+      setLoading(true);
+      const configured = isSupabaseConfigured();
+      setIsDbConnected(configured);
+
+      if (configured) {
+        try {
+          const [loadedLoans, loadedConsumptions, loadedProducts] = await Promise.all([
+            getLoans(),
+            getConsumptions(),
+            getProducts(),
+          ]);
+
+          setLoans(loadedLoans);
+          setConsumptions(loadedConsumptions);
+          setAvailableProducts(loadedProducts);
+        } catch (error) {
+          console.error("Error al cargar préstamos:", error);
+        }
+      }
+      setLoading(false);
+    }
+
+    loadData();
+  }, []);
+
+  const handlePrintVoucher = (type: "SALIDA" | "DEVOLUCIÓN" | "CONSUMO INTERNO", data: Record<string, string | number>) => {
+    const printWindow = window.open("", "_blank");
     if (!printWindow) return;
-    
+
     const html = `
       <html>
         <head>
@@ -59,70 +105,231 @@ export default function Prestamos() {
                   <p class="text-lg font-semibold text-zinc-800">Administración</p>
                 </div>
               </div>
-              <div class="p-4 border-l-4 border-purple-500 bg-purple-50 rounded-r-xl">
-                <p class="text-xs text-purple-400 font-bold uppercase tracking-wider mb-1">Detalle del Artículo</p>
-                <p class="text-xl font-bold text-zinc-800">${data.item}</p>
-                <p class="text-zinc-500 font-mono text-sm mt-1">SKU: ${data.sku}</p>
+
+              <div>
+                <table class="w-full text-left border border-zinc-200 rounded-lg overflow-hidden">
+                  <thead class="bg-zinc-50 text-xs font-bold text-zinc-500 uppercase">
+                    <tr>
+                      <th class="p-3">Concepto / Artículo</th>
+                      <th class="p-3">Código (SKU)</th>
+                      <th class="p-3 text-center">Cantidad</th>
+                    </tr>
+                  </thead>
+                  <tbody class="divide-y divide-zinc-200 text-sm">
+                    <tr>
+                      <td class="p-3 font-medium">${data.item}</td>
+                      <td class="p-3 font-mono text-zinc-600">${data.sku}</td>
+                      <td class="p-3 text-center font-bold">${data.qty || 1}</td>
+                    </tr>
+                  </tbody>
+                </table>
               </div>
+
+              ${
+                data.reason
+                  ? `
+                <div class="bg-zinc-50 p-4 rounded-xl border border-zinc-100">
+                  <p class="text-xs text-zinc-400 font-bold uppercase tracking-wider mb-1">Motivo</p>
+                  <p class="text-sm text-zinc-700">${data.reason}</p>
+                </div>
+              `
+                  : ""
+              }
             </div>
 
-            <div class="mt-20 pt-8 grid grid-cols-2 gap-12 text-center">
+            <div class="border-t-2 border-dashed border-zinc-200 pt-12 mt-12 grid grid-cols-2 gap-12 text-center">
               <div>
-                <div class="border-b-2 border-zinc-300 w-full mb-3"></div>
-                <p class="text-sm font-bold text-zinc-600">Firma de Entrega</p>
+                <div class="border-b border-black w-48 mx-auto mb-2"></div>
+                <p class="text-xs font-bold uppercase text-zinc-600">Firma de Quien Entrega</p>
               </div>
               <div>
-                <div class="border-b-2 border-zinc-300 w-full mb-3"></div>
-                <p class="text-sm font-bold text-zinc-600">Firma de Conformidad</p>
+                <div class="border-b border-black w-48 mx-auto mb-2"></div>
+                <p class="text-xs font-bold uppercase text-zinc-600">Firma de Quien Recibe</p>
               </div>
-            </div>
-            
-            <div class="mt-16 text-center text-xs text-zinc-400 border-t border-zinc-100 pt-6">
-              <p>Este documento es un comprobante oficial de ${type.toLowerCase()} de equipo/suministro.</p>
-              <p>El receptor asume la responsabilidad del uso adecuado y retorno (si aplica) del artículo descrito.</p>
             </div>
           </div>
           <script>
-            setTimeout(() => {
-              window.print();
-              window.close();
-            }, 1000);
+            window.onload = function() { window.print(); }
           </script>
         </body>
       </html>
     `;
-    
+
     printWindow.document.write(html);
     printWindow.document.close();
   };
 
-  const filteredLoans = MOCK_LOANS.filter(loan => 
-    loan.item.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    loan.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    loan.user.toLowerCase().includes(searchTerm.toLowerCase())
+  const handleReturn = async (loan: DbLoanItem) => {
+    if (!confirm(`¿Confirmas la devolución de "${loan.item}"?`)) return;
+
+    try {
+      if (isDbConnected && loan.id) {
+        await returnLoan(loan.id, loan.sku, loan.quantity || 1);
+      }
+      setLoans((prev) =>
+        prev.map((l) => (l.id === loan.id ? { ...l, status: "returned" } : l))
+      );
+      handlePrintVoucher("DEVOLUCIÓN", loan as unknown as Record<string, string | number>);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Error al procesar devolución";
+      alert(msg);
+    }
+  };
+
+  const handleCreateMovement = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedProductId || !formUser.trim()) {
+      alert("Por favor selecciona un producto y especifica el responsable.");
+      return;
+    }
+
+    const prod = availableProducts.find((p) => p.id === selectedProductId) || {
+      id: selectedProductId,
+      name: "Artículo Seleccionado",
+      sku: "SKU-TEMP",
+    };
+
+    setIsSaving(true);
+    try {
+      if (movementType === "prestamo") {
+        if (isDbConnected) {
+          const res = await createLoan({
+            productId: selectedProductId,
+            loanedTo: formUser.trim(),
+            deliveredBy: "Admin",
+            quantity: Number(formQty) || 1,
+          });
+          setLoans((prev) => [
+            {
+              id: res?.id || `L-${Date.now().toString().slice(-4)}`,
+              item: prod.name,
+              sku: prod.sku,
+              user: formUser.trim(),
+              date: new Date().toLocaleDateString(),
+              status: "active",
+              type: "Préstamo",
+              quantity: Number(formQty) || 1,
+            },
+            ...prev,
+          ]);
+        } else {
+          setLoans((prev) => [
+            {
+              id: `L-${Date.now().toString().slice(-4)}`,
+              item: prod.name,
+              sku: prod.sku,
+              user: formUser.trim(),
+              date: new Date().toLocaleDateString(),
+              status: "active",
+              type: "Préstamo",
+              quantity: Number(formQty) || 1,
+            },
+            ...prev,
+          ]);
+        }
+      } else {
+        if (isDbConnected) {
+          const res = await createConsumption({
+            productId: selectedProductId,
+            requestedBy: formUser.trim(),
+            dispatchedBy: "Admin",
+            quantity: Number(formQty) || 1,
+            reason: formReason.trim() || "Consumo regular",
+          });
+          setConsumptions((prev) => [
+            {
+              id: res?.id || `C-${Date.now().toString().slice(-4)}`,
+              item: prod.name,
+              sku: prod.sku,
+              user: formUser.trim(),
+              date: new Date().toLocaleDateString(),
+              qty: Number(formQty) || 1,
+              reason: formReason.trim() || "Consumo regular",
+              type: "Consumo Local",
+            },
+            ...prev,
+          ]);
+        } else {
+          setConsumptions((prev) => [
+            {
+              id: `C-${Date.now().toString().slice(-4)}`,
+              item: prod.name,
+              sku: prod.sku,
+              user: formUser.trim(),
+              date: new Date().toLocaleDateString(),
+              qty: Number(formQty) || 1,
+              reason: formReason.trim() || "Consumo regular",
+              type: "Consumo Local",
+            },
+            ...prev,
+          ]);
+        }
+      }
+
+      setIsModalOpen(false);
+      setFormUser("");
+      setFormQty(1);
+      setFormReason("");
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Error al registrar salida";
+      alert(msg);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const filteredLoans = loans.filter(
+    (l) =>
+      l.status === "active" &&
+      (l.item.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        l.user.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        l.sku.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
-  const filteredConsumption = MOCK_CONSUMPTION.filter(cons => 
-    cons.item.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    cons.sku.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    cons.user.toLowerCase().includes(searchTerm.toLowerCase())
+  const filteredConsumption = consumptions.filter(
+    (c) =>
+      c.item.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.user.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      c.sku.toLowerCase().includes(searchTerm.toLowerCase())
   );
+
+  if (!authLoading && !isAdmin && !canAccess("loans")) {
+    return (
+      <AccessDenied
+        title="Acceso Restringido a Préstamos"
+        message="El Administrador no te ha otorgado permisos para gestionar salidas o devoluciones de inventario."
+      />
+    );
+  }
 
   return (
     <main className="flex-1 p-8 overflow-y-auto">
-      <header className="flex justify-between items-end mb-8">
+      <header className="flex flex-col md:flex-row md:justify-between md:items-end gap-4 mb-8">
         <div>
           <div className="flex items-center gap-2 text-sm text-zinc-500 mb-2">
-            <Link href="/dashboard" className="hover:text-white transition-colors">Dashboard</Link>
+            <Link href="/dashboard" className="hover:text-white transition-colors">
+              Dashboard
+            </Link>
             <span>/</span>
-            <span className="text-zinc-300">Préstamos y Consumo</span>
+            <span className="text-zinc-300">Movimientos y Salidas</span>
           </div>
-          <h1 className="text-4xl font-bold tracking-tight">Salidas de Inventario</h1>
-          <p className="text-zinc-400 mt-1">Controla los equipos prestados y los suministros consumidos internamente.</p>
+          <div className="flex items-center gap-3">
+            <h1 className="text-4xl font-bold tracking-tight">Préstamos y Consumo</h1>
+            {isDbConnected ? (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                <Database className="w-3 h-3" /> Supabase Conectado
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                <AlertCircle className="w-3 h-3" /> Modo Demo
+              </span>
+            )}
+          </div>
+          <p className="text-zinc-400 mt-1">Control de salidas de equipos retornables y suministros internos.</p>
         </div>
-        
+
         <div className="flex gap-3">
-          <button 
+          <button
             onClick={() => setIsModalOpen(true)}
             className="flex items-center gap-2 px-4 py-2 bg-white text-black hover:bg-zinc-200 rounded-lg text-sm font-semibold transition-all shadow-[0_0_15px_rgba(255,255,255,0.2)] hover:scale-105"
           >
@@ -133,18 +340,34 @@ export default function Prestamos() {
       </header>
 
       {/* Tabs */}
-      <div className="flex border-b border-white/10 mb-6">
-        <button 
+      <div className="flex gap-4 border-b border-white/10 mb-6">
+        <button
           onClick={() => setActiveTab("prestamos")}
-          className={`pb-3 px-4 text-sm font-medium transition-colors border-b-2 ${activeTab === "prestamos" ? "border-white text-white" : "border-transparent text-zinc-500 hover:text-zinc-300"}`}
+          className={`flex items-center gap-2 pb-3 px-1 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === "prestamos"
+              ? "border-blue-500 text-white"
+              : "border-transparent text-zinc-400 hover:text-zinc-300"
+          }`}
         >
-          Equipos Prestados
+          <Clock className="w-4 h-4" />
+          Préstamos Activos
+          <span className="ml-1.5 px-2 py-0.5 text-xs bg-white/10 rounded-full text-zinc-300">
+            {filteredLoans.length}
+          </span>
         </button>
-        <button 
+        <button
           onClick={() => setActiveTab("consumo")}
-          className={`pb-3 px-4 text-sm font-medium transition-colors border-b-2 ${activeTab === "consumo" ? "border-white text-white" : "border-transparent text-zinc-500 hover:text-zinc-300"}`}
+          className={`flex items-center gap-2 pb-3 px-1 text-sm font-medium border-b-2 transition-colors ${
+            activeTab === "consumo"
+              ? "border-purple-500 text-white"
+              : "border-transparent text-zinc-400 hover:text-zinc-300"
+          }`}
         >
-          Consumo Local (Suministros)
+          <PackageMinus className="w-4 h-4" />
+          Consumo Local / Suministros
+          <span className="ml-1.5 px-2 py-0.5 text-xs bg-white/10 rounded-full text-zinc-300">
+            {filteredConsumption.length}
+          </span>
         </button>
       </div>
 
@@ -152,31 +375,30 @@ export default function Prestamos() {
       <div className="bg-white/5 border border-white/10 backdrop-blur-md rounded-2xl p-4 mb-6 flex justify-between items-center">
         <div className="relative w-96">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
-          <input 
-            type="text" 
-            placeholder="Buscar por usuario, artículo o código..." 
+          <input
+            type="text"
+            placeholder="Buscar por artículo, usuario o folio..."
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            className="w-full bg-black/40 border border-white/10 text-white rounded-lg py-2 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+            className="w-full bg-black/40 border border-white/10 text-white rounded-lg py-2 pl-10 pr-4 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50"
           />
-        </div>
-        <div className="flex gap-3">
-          <button className="flex items-center gap-2 px-3 py-2 bg-black/40 border border-white/10 rounded-lg text-sm text-zinc-300 hover:text-white transition-colors">
-            <Filter className="w-4 h-4" />
-            Filtrar Fecha
-          </button>
         </div>
       </div>
 
-      {/* Table Area */}
+      {/* Table Content */}
       <div className="bg-white/5 border border-white/10 backdrop-blur-md rounded-2xl overflow-hidden">
-        {activeTab === "prestamos" ? (
+        {loading ? (
+          <div className="p-12 text-center flex items-center justify-center gap-2 text-zinc-400">
+            <Loader2 className="w-5 h-5 animate-spin text-blue-400" />
+            <span>Cargando movimientos...</span>
+          </div>
+        ) : activeTab === "prestamos" ? (
           <table className="w-full text-sm text-left">
             <thead className="bg-white/5 border-b border-white/10 text-zinc-400 font-medium">
               <tr>
-                <th className="px-6 py-4">ID Préstamo</th>
-                <th className="px-6 py-4">Artículo</th>
-                <th className="px-6 py-4">Asignado a</th>
+                <th className="px-6 py-4">Folio</th>
+                <th className="px-6 py-4">Equipo / Artículo</th>
+                <th className="px-6 py-4">Responsable</th>
                 <th className="px-6 py-4">Fecha Salida</th>
                 <th className="px-6 py-4 text-center">Estado</th>
                 <th className="px-6 py-4 text-right">Acciones</th>
@@ -186,17 +408,14 @@ export default function Prestamos() {
               {filteredLoans.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-zinc-500">
-                    No se encontraron préstamos que coincidan con la búsqueda.
+                    No hay préstamos activos en este momento.
                   </td>
                 </tr>
               ) : (
-                filteredLoans.map((loan, i) => (
-                  <tr key={i} className="hover:bg-white/5 transition-colors group">
-                    <td className="px-6 py-4 font-mono text-zinc-300">{loan.id}</td>
-                    <td className="px-6 py-4 font-medium flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
-                        <Clock className="w-4 h-4" />
-                      </div>
+                filteredLoans.map((loan) => (
+                  <tr key={loan.id} className="hover:bg-white/5 transition-colors group">
+                    <td className="px-6 py-4 font-mono text-zinc-400">{loan.id}</td>
+                    <td className="px-6 py-4 font-medium">
                       <div>
                         <div>{loan.item}</div>
                         <div className="text-xs text-zinc-500 font-mono">{loan.sku}</div>
@@ -210,15 +429,20 @@ export default function Prestamos() {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right flex items-center justify-end gap-2">
-                      <button 
-                        onClick={() => handlePrintVoucher("SALIDA", loan)}
+                      <button
+                        onClick={() =>
+                          handlePrintVoucher(
+                            "SALIDA",
+                            loan as unknown as Record<string, string | number>
+                          )
+                        }
                         className="text-blue-400 hover:text-blue-300 font-medium p-1.5 border border-blue-400/20 bg-blue-400/10 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
                         title="Imprimir Vale de Salida"
                       >
                         <Printer className="w-4 h-4" />
                       </button>
-                      <button 
-                        onClick={() => handlePrintVoucher("DEVOLUCIÓN", loan)}
+                      <button
+                        onClick={() => handleReturn(loan)}
                         className="text-emerald-400 hover:text-emerald-300 font-medium text-xs border border-emerald-400/20 bg-emerald-400/10 px-3 py-1.5 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
                       >
                         Registrar Devolución
@@ -245,12 +469,12 @@ export default function Prestamos() {
               {filteredConsumption.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-zinc-500">
-                    No se encontraron registros de consumo que coincidan con la búsqueda.
+                    No se encontraron registros de consumo.
                   </td>
                 </tr>
               ) : (
-                filteredConsumption.map((cons, i) => (
-                  <tr key={i} className="hover:bg-white/5 transition-colors group">
+                filteredConsumption.map((cons) => (
+                  <tr key={cons.id} className="hover:bg-white/5 transition-colors group">
                     <td className="px-6 py-4 font-mono text-zinc-300">{cons.id}</td>
                     <td className="px-6 py-4 font-medium flex items-center gap-3">
                       <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400">
@@ -268,8 +492,13 @@ export default function Prestamos() {
                       <div className="text-xs text-zinc-500 mt-0.5">{cons.reason}</div>
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <button 
-                        onClick={() => handlePrintVoucher("CONSUMO INTERNO", cons)}
+                      <button
+                        onClick={() =>
+                          handlePrintVoucher(
+                            "CONSUMO INTERNO",
+                            cons as unknown as Record<string, string | number>
+                          )
+                        }
                         className="text-blue-400 hover:text-blue-300 font-medium p-1.5 border border-blue-400/20 bg-blue-400/10 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center"
                         title="Imprimir Vale de Consumo"
                       >
@@ -292,35 +521,103 @@ export default function Prestamos() {
               <h2 className="text-xl font-bold">Registrar Nueva Salida</h2>
               <p className="text-sm text-zinc-400">Selecciona el tipo de movimiento de inventario.</p>
             </div>
-            <div className="p-6 space-y-4">
-              <div>
-                <label className="text-sm font-medium text-zinc-300 mb-1.5 block">Tipo de Salida</label>
-                <select className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-white appearance-none">
-                  <option value="prestamo" className="bg-zinc-900">Préstamo (Equipos retornables)</option>
-                  <option value="consumo" className="bg-zinc-900">Consumo Local (Suministros no retornables)</option>
-                </select>
+            <form onSubmit={handleCreateMovement}>
+              <div className="p-6 space-y-4">
+                <div>
+                  <label className="text-sm font-medium text-zinc-300 mb-1.5 block">Tipo de Salida</label>
+                  <select
+                    value={movementType}
+                    onChange={(e) => setMovementType(e.target.value as "prestamo" | "consumo")}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-white appearance-none"
+                  >
+                    <option value="prestamo" className="bg-zinc-900">
+                      Préstamo (Equipos retornables)
+                    </option>
+                    <option value="consumo" className="bg-zinc-900">
+                      Consumo Local (Suministros no retornables)
+                    </option>
+                  </select>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-zinc-300 mb-1.5 block">
+                    Producto / Artículo *
+                  </label>
+                  <select
+                    required
+                    value={selectedProductId}
+                    onChange={(e) => setSelectedProductId(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-white appearance-none"
+                  >
+                    <option value="" disabled className="bg-zinc-900 text-zinc-500">
+                      {availableProducts.length > 0
+                        ? "Selecciona un producto..."
+                        : "No hay productos en inventario. Registra uno primero en Productos."}
+                    </option>
+                    {availableProducts.map((p) => (
+                      <option key={p.id} value={p.id} className="bg-zinc-900">
+                        {p.name} (Stock: {p.stock})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-sm font-medium text-zinc-300 mb-1.5 block">
+                      Cantidad *
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      required
+                      value={formQty}
+                      onChange={(e) => setFormQty(Number(e.target.value))}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-sm font-medium text-zinc-300 mb-1.5 block">
+                      Responsable *
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      value={formUser}
+                      onChange={(e) => setFormUser(e.target.value)}
+                      className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50"
+                      placeholder="Ej. Ana Martínez / Depto. IT"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm font-medium text-zinc-300 mb-1.5 block">
+                    Motivo / Observaciones
+                  </label>
+                  <textarea
+                    value={formReason}
+                    onChange={(e) => setFormReason(e.target.value)}
+                    className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 min-h-[80px]"
+                    placeholder="Ej. Préstamo para evento en exteriores..."
+                  ></textarea>
+                </div>
               </div>
-              <div>
-                <label className="text-sm font-medium text-zinc-300 mb-1.5 block">Producto / Artículo</label>
-                <select className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 text-white appearance-none">
-                  <option value="" disabled selected className="bg-zinc-900 text-zinc-500">Selecciona un producto...</option>
-                  <option value="1" className="bg-zinc-900">MacBook Pro 16" (Stock: 12)</option>
-                  <option value="2" className="bg-zinc-900">Cartucho Tinta Negra HP (Stock: 50)</option>
-                </select>
+              <div className="p-6 border-t border-white/10 bg-white/5 flex justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => setIsModalOpen(false)}
+                  className="px-4 py-2 text-sm font-medium text-zinc-300 hover:text-white transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  disabled={isSaving}
+                  className="px-4 py-2 bg-white text-black rounded-lg text-sm font-semibold hover:bg-zinc-200 transition-colors flex items-center gap-2"
+                >
+                  {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+                  <span>{isSaving ? "Guardando..." : "Confirmar Salida"}</span>
+                </button>
               </div>
-              <div>
-                <label className="text-sm font-medium text-zinc-300 mb-1.5 block">Usuario o Departamento Destino</label>
-                <input type="text" className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50" placeholder="Ej. Ana Martínez / Depto. IT" />
-              </div>
-              <div>
-                <label className="text-sm font-medium text-zinc-300 mb-1.5 block">Motivo / Notas</label>
-                <textarea className="w-full bg-white/5 border border-white/10 rounded-lg py-2 px-3 text-sm focus:outline-none focus:ring-2 focus:ring-purple-500/50 min-h-[80px]" placeholder="Ej. Préstamo para evento en exteriores..."></textarea>
-              </div>
-            </div>
-            <div className="p-6 border-t border-white/10 bg-white/5 flex justify-end gap-3">
-              <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-sm font-medium text-zinc-300 hover:text-white transition-colors">Cancelar</button>
-              <button className="px-4 py-2 bg-white text-black rounded-lg text-sm font-semibold hover:bg-zinc-200 transition-colors">Confirmar Salida</button>
-            </div>
+            </form>
           </div>
         </div>
       )}

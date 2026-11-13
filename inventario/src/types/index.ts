@@ -1,4 +1,4 @@
-export type Role = 'admin' | 'editor' | 'viewer';
+export type Role = 'admin' | 'editor' | 'viewer' | 'user';
 
 export interface Category {
   id: string;
@@ -10,10 +10,12 @@ export interface Category {
 export interface UserProfile {
   id: string;
   full_name: string;
+  email?: string;
   role: Role;
   can_access_inventory: boolean;
   can_access_loans: boolean;
   can_access_reports: boolean;
+  is_active?: boolean;
   created_at?: string;
 }
 
@@ -25,6 +27,7 @@ export interface Product {
   stock: number;
   loaned: number;
   lowStockThreshold: number;
+  image_url?: string | null;
   created_at?: string;
   updated_at?: string;
 }
