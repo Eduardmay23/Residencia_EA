@@ -32,7 +32,7 @@ export async function getDashboardData(): Promise<{
     const totalProducts = products.length;
     const totalStock = products.reduce((acc, p) => acc + (p.stock || 0), 0);
     const lowStockAlerts = products.filter(
-      (p) => (p.stock || 0) <= (p.low_stock_threshold || 5)
+      (p) => (p.stock || 0) < (p.low_stock_threshold || 5)
     ).length;
 
     const activeLoans = (loansRes.data || []).length;

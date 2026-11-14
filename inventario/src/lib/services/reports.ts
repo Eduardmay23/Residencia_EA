@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/client';
+import { deleteLoan, deleteConsumption } from '@/lib/services/loans';
 
 export interface MonthOption {
   key: string; // ej. "2026-11"
@@ -14,8 +15,16 @@ export interface CategorySummary {
   exitsInMonth: number;
   loansInMonth: number;
   consumptionInMonth: number;
-  percentage: number;
+  percentage: number; // % del stock total en almacén
+  exitsPercentage: number; // % del total de salidas del mes
   color: string;
+}
+
+export interface AuditLogItem {
+  id: string;
+  type: string;
+  details: string;
+  date: string;
 }
 
 export interface ProductReportItem {
@@ -56,6 +65,7 @@ export interface MonthlyAnalysisReport {
   categoriesSummary: CategorySummary[];
   products: ProductReportItem[];
   movements: MovementReportItem[];
+  auditLogs: AuditLogItem[];
 }
 
 const CATEGORY_COLORS = [
@@ -119,8 +129,8 @@ export async function getMonthlyCategoryReport(
   try {
     const supabase = createClient();
 
-    // 1. Consultar productos, préstamos y movimientos en paralelo
-    const [productsRes, loansRes, movementsRes, categoriesRes] = await Promise.all([
+    // 1. Consultar productos, préstamos, movimientos, categorías y auditoría en paralelo
+    const [productsRes, loansRes, movementsRes, categoriesRes, activitiesRes] = await Promise.all([
       supabase.from('products').select('*').order('name', { ascending: true }),
       supabase
         .from('loans')
@@ -131,6 +141,12 @@ export async function getMonthlyCategoryReport(
         .select('*, products(id, name, sku, category_name)')
         .order('date', { ascending: false }),
       supabase.from('categories').select('name').order('name', { ascending: true }),
+      supabase
+        .from('activities')
+        .select('*')
+        .gte('created_at', startDate.toISOString())
+        .lte('created_at', endDate.toISOString())
+        .order('created_at', { ascending: false }),
     ]);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -141,6 +157,13 @@ export async function getMonthlyCategoryReport(
     const allMovements: any[] = movementsRes.data || [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const dbCategories: any[] = categoriesRes.data || [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const auditLogs: AuditLogItem[] = (activitiesRes.data || []).map((a: any) => ({
+      id: a.id,
+      type: a.type,
+      details: a.details,
+      date: new Date(a.created_at).toLocaleString('es-MX'),
+    }));
 
     // Obtener lista única de categorías disponibles
     const catSet = new Set<string>();
@@ -219,8 +242,16 @@ export async function getMonthlyCategoryReport(
       });
 
       allLoans.forEach((l) => {
-        if (l.product_id === p.id && new Date(l.loan_date || l.created_at) > endDate) {
+        if (l.product_id !== p.id) return;
+        const loanDate = new Date(l.loan_date || l.created_at);
+        const returnDate = l.return_date ? new Date(l.return_date) : null;
+
+        if (loanDate > endDate && l.status === 'active') {
+          // Préstamo posterior aún activo: hoy está fuera de stock, al cierre del mes estaba en almacén
           stockAtMonthEnd += l.quantity || 0;
+        } else if (loanDate <= endDate && l.status === 'returned' && returnDate && returnDate > endDate) {
+          // Préstamo hecho antes/durante el mes que se devolvió después: al cierre del mes estaba prestado
+          stockAtMonthEnd = Math.max(0, stockAtMonthEnd - (l.quantity || 0));
         }
       });
 
@@ -278,6 +309,7 @@ export async function getMonthlyCategoryReport(
           loansInMonth: 0,
           consumptionInMonth: 0,
           percentage: 0,
+          exitsPercentage: 0,
           color: CATEGORY_COLORS[Object.keys(catGroup).length % CATEGORY_COLORS.length],
         };
       }
@@ -288,9 +320,11 @@ export async function getMonthlyCategoryReport(
       catGroup[cat].exitsInMonth += p.loansInMonth + p.consumptionInMonth;
     });
 
-    const totalStockGlobal = Object.values(catGroup).reduce((acc, c) => acc + c.stockInMonth, 0) || 1;
+    const totalStockGlobal = Object.values(catGroup).reduce((acc, c) => acc + c.stockInMonth, 0);
+    const totalExitsGlobal = Object.values(catGroup).reduce((acc, c) => acc + c.exitsInMonth, 0);
     Object.values(catGroup).forEach((c) => {
-      c.percentage = Math.round((c.stockInMonth / totalStockGlobal) * 100);
+      c.percentage = totalStockGlobal > 0 ? Math.round((c.stockInMonth / totalStockGlobal) * 100) : 0;
+      c.exitsPercentage = totalExitsGlobal > 0 ? Math.round((c.exitsInMonth / totalExitsGlobal) * 100) : 0;
     });
 
     const categoriesSummary = Object.values(catGroup);
@@ -338,6 +372,7 @@ export async function getMonthlyCategoryReport(
       categoriesSummary,
       products: productStatsList,
       movements: movementsInMonth,
+      auditLogs,
     };
   } catch (err) {
     console.error('Error calculando reporte mensual por categoría:', err);
@@ -355,6 +390,16 @@ export async function getMonthlyCategoryReport(
       categoriesSummary: [],
       products: [],
       movements: [],
+      auditLogs: [],
     };
   }
+}
+
+export async function deleteReportMovement(movementId: string, type: string): Promise<boolean> {
+  if (type === 'loan') {
+    // Si el préstamo sigue activo, las unidades regresan al stock
+    return deleteLoan(movementId, true);
+  }
+  // Los consumos regresan sus unidades al stock; ingresos/ajustes solo se borran del historial
+  return deleteConsumption(movementId, type === 'consumption');
 }

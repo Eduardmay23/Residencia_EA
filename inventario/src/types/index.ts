@@ -15,6 +15,7 @@ export interface UserProfile {
   can_access_inventory: boolean;
   can_access_loans: boolean;
   can_access_reports: boolean;
+  can_delete?: boolean;
   is_active?: boolean;
   created_at?: string;
 }

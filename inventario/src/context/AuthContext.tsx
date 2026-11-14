@@ -11,6 +11,7 @@ interface AuthContextType {
   profile: UserProfile | null;
   loading: boolean;
   isAdmin: boolean;
+  canDelete: boolean;
   canAccess: (section: "inventory" | "loans" | "reports") => boolean;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -56,8 +57,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       try {
         const { data: { session } } = await supabase.auth.getSession();
         if (session?.user) {
-          setUser(session.user);
           const p = await fetchProfile(session.user.id);
+          if (p && p.is_active === false) {
+            await supabase.auth.signOut();
+            setUser(null);
+            setProfile(null);
+            router.replace("/");
+            return;
+          }
+          setUser(session.user);
           setProfile(p);
         }
       } catch (err) {
@@ -71,8 +79,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
-        setUser(session.user);
         const p = await fetchProfile(session.user.id);
+        if (p && p.is_active === false) {
+          await supabase.auth.signOut();
+          setUser(null);
+          setProfile(null);
+          router.replace("/");
+          setLoading(false);
+          return;
+        }
+        setUser(session.user);
         setProfile(p);
       } else {
         setUser(null);
@@ -84,9 +100,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return () => {
       subscription.unsubscribe();
     };
-  }, [supabase, fetchProfile]);
+  }, [supabase, fetchProfile, router]);
 
   const isAdmin = profile?.role === "admin";
+  const canDelete = Boolean(isAdmin || profile?.can_delete);
 
   const canAccess = useCallback(
     (section: "inventory" | "loans" | "reports") => {
@@ -121,6 +138,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         profile,
         loading,
         isAdmin,
+        canDelete,
         canAccess,
         signOut,
         refreshProfile,

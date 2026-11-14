@@ -2,6 +2,7 @@ import { createClient } from '@/lib/supabase/client';
 
 export interface DbLoanItem {
   id: string;
+  productId?: string;
   item: string;
   sku: string;
   user: string;
@@ -29,6 +30,7 @@ export async function getLoans(): Promise<DbLoanItem[]> {
       .from('loans')
       .select(`
         id,
+        product_id,
         quantity,
         loan_date,
         status,
@@ -48,6 +50,7 @@ export async function getLoans(): Promise<DbLoanItem[]> {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     return (data || []).map((row: any) => ({
       id: row.id,
+      productId: row.product_id,
       item: row.products?.name || 'Artículo',
       sku: row.products?.sku || 'N/A',
       user: row.loaned_to,
@@ -70,7 +73,22 @@ export async function createLoan(payload: {
 }) {
   const supabase = createClient();
 
-  // 1. Insertar préstamo
+  // 1. Verificar stock disponible antes de crear el préstamo
+  const { data: prod, error: prodErr } = await supabase
+    .from('products')
+    .select('stock, loaned, name')
+    .eq('id', payload.productId)
+    .single();
+
+  if (prodErr || !prod) {
+    throw new Error('No se encontró el producto seleccionado.');
+  }
+
+  if ((prod.stock || 0) < payload.quantity) {
+    throw new Error(`Stock insuficiente de "${prod.name}". Disponible: ${prod.stock || 0} unidad(es).`);
+  }
+
+  // 2. Insertar préstamo
   const { data: loan, error: loanErr } = await supabase
     .from('loans')
     .insert([
@@ -87,29 +105,21 @@ export async function createLoan(payload: {
 
   if (loanErr) throw loanErr;
 
-  // 2. Incrementar préstamos y decrementar stock en el producto
-  const { data: prod } = await supabase
+  // 3. Incrementar préstamos y decrementar stock en el producto
+  const newStock = Math.max(0, (prod.stock || 0) - payload.quantity);
+  const newLoaned = (prod.loaned || 0) + payload.quantity;
+  await supabase
     .from('products')
-    .select('stock, loaned, name')
-    .eq('id', payload.productId)
-    .single();
+    .update({ stock: newStock, loaned: newLoaned })
+    .eq('id', payload.productId);
 
-  if (prod) {
-    const newStock = Math.max(0, (prod.stock || 0) - payload.quantity);
-    const newLoaned = (prod.loaned || 0) + payload.quantity;
-    await supabase
-      .from('products')
-      .update({ stock: newStock, loaned: newLoaned })
-      .eq('id', payload.productId);
-
-    // Registrar actividad
-    await supabase.from('activities').insert([
-      {
-        type: 'loan_created',
-        details: `Se prestó ${payload.quantity}x ${prod.name} a ${payload.loanedTo}`,
-      },
-    ]);
-  }
+  // Registrar actividad
+  await supabase.from('activities').insert([
+    {
+      type: 'loan_created',
+      details: `Se prestó ${payload.quantity}x ${prod.name} a ${payload.loanedTo} (autorizado por ${payload.deliveredBy})`,
+    },
+  ]);
 
   return loan;
 }
@@ -197,6 +207,22 @@ export async function createConsumption(payload: {
 }) {
   const supabase = createClient();
 
+  // 1. Verificar stock disponible
+  const { data: prod, error: prodErr } = await supabase
+    .from('products')
+    .select('stock, name')
+    .eq('id', payload.productId)
+    .single();
+
+  if (prodErr || !prod) {
+    throw new Error('No se encontró el producto seleccionado.');
+  }
+
+  if ((prod.stock || 0) < payload.quantity) {
+    throw new Error(`Stock insuficiente de "${prod.name}". Disponible: ${prod.stock || 0} unidad(es).`);
+  }
+
+  // 2. Insertar consumo
   const { data, error } = await supabase
     .from('movements')
     .insert([
@@ -214,24 +240,132 @@ export async function createConsumption(payload: {
 
   if (error) throw error;
 
-  const { data: prod } = await supabase
-    .from('products')
-    .select('stock, name')
-    .eq('id', payload.productId)
-    .single();
+  // 3. Descontar stock
+  const newStock = Math.max(0, (prod.stock || 0) - payload.quantity);
+  await supabase.from('products').update({ stock: newStock }).eq('id', payload.productId);
 
-  if (prod) {
-    const newStock = Math.max(0, (prod.stock || 0) - payload.quantity);
-    await supabase.from('products').update({ stock: newStock }).eq('id', payload.productId);
-
-    await supabase.from('activities').insert([
-      {
-        type: 'stock_adjusted',
-        details: `Consumo interno de ${payload.quantity}x ${prod.name} para ${payload.requestedBy}`,
-      },
-    ]);
-  }
+  await supabase.from('activities').insert([
+    {
+      type: 'stock_adjusted',
+      details: `Consumo interno de ${payload.quantity}x ${prod.name} para ${payload.requestedBy} (despachado por ${payload.dispatchedBy})`,
+    },
+  ]);
 
   return data;
+}
+
+export async function deleteLoan(loanId: string, restoreStock: boolean = true): Promise<boolean> {
+  const supabase = createClient();
+
+  // 1. Obtener detalles del préstamo antes de borrar
+  const { data: loan, error: fetchErr } = await supabase
+    .from('loans')
+    .select('product_id, quantity, status, loaned_to, products(name)')
+    .eq('id', loanId)
+    .single();
+
+  if (fetchErr) {
+    console.error('Error fetching loan to delete:', fetchErr);
+  }
+
+  // 2. Eliminar préstamo (.select() devuelve las filas realmente borradas)
+  const { data: deleted, error } = await supabase
+    .from('loans')
+    .delete()
+    .eq('id', loanId)
+    .select('id');
+
+  if (error) {
+    console.error('Error deleting loan:', error);
+    throw error;
+  }
+
+  if (!deleted || deleted.length === 0) {
+    throw new Error('No tienes permiso para eliminar este préstamo o ya no existe.');
+  }
+
+  // 3. Si estaba activo, reintegrar las unidades al producto
+  if (loan && loan.status === 'active' && restoreStock && loan.product_id) {
+    const { data: prod } = await supabase
+      .from('products')
+      .select('stock, loaned')
+      .eq('id', loan.product_id)
+      .single();
+
+    if (prod) {
+      const newStock = (prod.stock || 0) + (loan.quantity || 1);
+      const newLoaned = Math.max(0, (prod.loaned || 0) - (loan.quantity || 1));
+      await supabase
+        .from('products')
+        .update({ stock: newStock, loaned: newLoaned })
+        .eq('id', loan.product_id);
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const prodName = (loan?.products as any)?.name || 'Artículo';
+  await supabase.from('activities').insert([
+    {
+      type: 'stock_adjusted',
+      details: `Registro de préstamo eliminado: ${prodName} (a ${loan?.loaned_to || 'colaborador'})`,
+    },
+  ]);
+
+  return true;
+}
+
+export async function deleteConsumption(consumptionId: string, restoreStock: boolean = true): Promise<boolean> {
+  const supabase = createClient();
+
+  // 1. Obtener detalles del movimiento
+  const { data: mov } = await supabase
+    .from('movements')
+    .select('product_id, quantity, requested_by, products(name)')
+    .eq('id', consumptionId)
+    .single();
+
+  // 2. Eliminar movimiento
+  const { data: deleted, error } = await supabase
+    .from('movements')
+    .delete()
+    .eq('id', consumptionId)
+    .select('id');
+
+  if (error) {
+    console.error('Error deleting consumption movement:', error);
+    throw error;
+  }
+
+  if (!deleted || deleted.length === 0) {
+    throw new Error('No tienes permiso para eliminar este registro o ya no existe.');
+  }
+
+  // 3. Reintegrar unidades al stock del producto
+  if (mov && restoreStock && mov.product_id) {
+    const { data: prod } = await supabase
+      .from('products')
+      .select('stock')
+      .eq('id', mov.product_id)
+      .single();
+
+    if (prod) {
+      const newStock = (prod.stock || 0) + (mov.quantity || 1);
+      await supabase
+        .from('products')
+        .update({ stock: newStock })
+        .eq('id', mov.product_id);
+    }
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const prodName = (mov?.products as any)?.name || 'Suministro';
+  await supabase.from('activities').insert([
+    {
+      type: 'stock_adjusted',
+      details: `Registro de salida eliminado: ${prodName} (solicitado por ${mov?.requested_by || 'usuario'})`,
+    },
+  ]);
+
+  return true;
 }
 

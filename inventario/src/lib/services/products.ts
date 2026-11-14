@@ -56,8 +56,10 @@ export async function createProduct(payload: {
   category_name: string;
   stock: number;
   image_url?: string | null;
+  createdBy?: string;
 }): Promise<Product | null> {
   const supabase = createClient();
+  const actor = payload.createdBy || 'Sistema';
   const { data, error } = await supabase
     .from('products')
     .insert([
@@ -79,6 +81,132 @@ export async function createProduct(payload: {
     throw error;
   }
 
+  // Registrar ingreso inicial en movimientos si hay stock > 0
+  if (data && payload.stock > 0) {
+    await supabase.from('movements').insert([
+      {
+        product_id: data.id,
+        type: 'addition',
+        quantity: payload.stock,
+        requested_by: actor,
+        dispatched_by: actor,
+        reason: 'Alta inicial de producto',
+      },
+    ]);
+  }
+
+  // Registrar auditoría
+  await supabase.from('activities').insert([
+    {
+      type: 'product_added',
+      details: `Nuevo producto registrado: ${payload.name} (SKU: ${payload.sku}, Stock inicial: ${payload.stock}) por ${actor}`,
+    },
+  ]);
+
   return mapDbProductToProduct(data as DbProduct);
+}
+
+export async function updateProduct(
+  productId: string,
+  payload: {
+    name: string;
+    sku: string;
+    category_name: string;
+    stock: number;
+    image_url?: string | null;
+    updatedBy?: string;
+  }
+): Promise<Product | null> {
+  const supabase = createClient();
+  const actor = payload.updatedBy || 'Sistema';
+
+  const { data: prev } = await supabase
+    .from('products')
+    .select('stock, name')
+    .eq('id', productId)
+    .single();
+
+  const { data, error } = await supabase
+    .from('products')
+    .update({
+      name: payload.name,
+      sku: payload.sku,
+      category_name: payload.category_name,
+      stock: payload.stock,
+      image_url: payload.image_url,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', productId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error updating product:', error);
+    throw error;
+  }
+
+  if (prev) {
+    const diff = payload.stock - (prev.stock || 0);
+    if (diff !== 0) {
+      await supabase.from('movements').insert([
+        {
+          product_id: productId,
+          type: diff > 0 ? 'addition' : 'adjustment',
+          quantity: Math.abs(diff),
+          requested_by: actor,
+          dispatched_by: actor,
+          reason: diff > 0 ? 'Reabastecimiento / Ajuste positivo' : 'Ajuste de inventario a la baja',
+        },
+      ]);
+    }
+  }
+
+  await supabase.from('activities').insert([
+    {
+      type: 'product_updated',
+      details: `Producto actualizado: ${payload.name} (SKU: ${payload.sku}, Stock: ${payload.stock}) por ${actor}`,
+    },
+  ]);
+
+  return mapDbProductToProduct(data as DbProduct);
+}
+
+export async function deleteProduct(productId: string): Promise<boolean> {
+  const supabase = createClient();
+
+  // 1. Obtener datos del producto para la bitácora
+  const { data: prod } = await supabase
+    .from('products')
+    .select('name, sku')
+    .eq('id', productId)
+    .single();
+
+  // 2. Eliminar de la base de datos (.select() devuelve las filas realmente borradas)
+  const { data: deleted, error } = await supabase
+    .from('products')
+    .delete()
+    .eq('id', productId)
+    .select('id');
+
+  if (error) {
+    console.error('Error deleting product:', error);
+    throw error;
+  }
+
+  if (!deleted || deleted.length === 0) {
+    throw new Error('No tienes permiso para eliminar este producto o ya no existe.');
+  }
+
+  // 3. Registrar auditoría
+  if (prod) {
+    await supabase.from('activities').insert([
+      {
+        type: 'stock_adjusted',
+        details: `Producto eliminado del catálogo: ${prod.name} (SKU: ${prod.sku})`,
+      },
+    ]);
+  }
+
+  return true;
 }
 

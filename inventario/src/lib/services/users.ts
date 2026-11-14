@@ -10,6 +10,7 @@ export interface CreateUserData {
   canAccessInventory: boolean;
   canAccessLoans: boolean;
   canAccessReports: boolean;
+  canDelete?: boolean;
 }
 
 export async function getAllUsers(): Promise<UserProfile[]> {
@@ -44,6 +45,7 @@ export async function updateUserPermissions(
       can_access_inventory: updates.can_access_inventory,
       can_access_loans: updates.can_access_loans,
       can_access_reports: updates.can_access_reports,
+      can_delete: updates.can_delete,
       is_active: updates.is_active,
     })
     .eq("id", userId)
@@ -88,6 +90,7 @@ export async function createUserByAdmin(payload: CreateUserData): Promise<{ id: 
         can_access_inventory: payload.canAccessInventory,
         can_access_loans: payload.canAccessLoans,
         can_access_reports: payload.canAccessReports,
+        can_delete: payload.canDelete ?? false,
       },
     },
   });

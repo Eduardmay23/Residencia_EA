@@ -1,8 +1,9 @@
 "use client";
 
-import { Package2, Users, LayoutDashboard, LogOut, ClipboardList, BarChart3, ShieldCheck, User } from "lucide-react";
+import { useEffect } from "react";
+import { Package2, Users, LayoutDashboard, LogOut, ClipboardList, BarChart3, ShieldCheck, User, Loader2 } from "lucide-react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/context/AuthContext";
 
 export default function DashboardLayout({
@@ -11,7 +12,25 @@ export default function DashboardLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const router = useRouter();
   const { profile, user, isAdmin, canAccess, signOut, loading } = useAuth();
+
+  useEffect(() => {
+    if (!loading && !user) {
+      router.replace("/");
+    }
+  }, [loading, user, router]);
+
+  if (loading || !user) {
+    return (
+      <div className="min-h-screen bg-background text-foreground flex items-center justify-center">
+        <div className="flex items-center gap-3 text-zinc-400 text-sm">
+          <Loader2 className="w-5 h-5 animate-spin text-blue-400" />
+          <span>Verificando sesión...</span>
+        </div>
+      </div>
+    );
+  }
 
   // Comprobar visibilidad de cada apartado
   const showInventory = isAdmin || canAccess("inventory");

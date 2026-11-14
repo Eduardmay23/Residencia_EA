@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Search, Plus, Clock, PackageMinus, Printer, Loader2, Database, AlertCircle } from "lucide-react";
+import { Search, Plus, Clock, PackageMinus, Printer, Loader2, Database, AlertCircle, Trash2 } from "lucide-react";
 import Link from "next/link";
 import {
   getLoans,
@@ -9,6 +9,8 @@ import {
   createLoan,
   createConsumption,
   returnLoan,
+  deleteLoan,
+  deleteConsumption,
   DbLoanItem,
   DbConsumptionItem,
 } from "@/lib/services/loans";
@@ -17,9 +19,17 @@ import { isSupabaseConfigured } from "@/lib/supabase/client";
 import { Product } from "@/types";
 import { useAuth } from "@/context/AuthContext";
 import AccessDenied from "@/components/AccessDenied";
+import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
+
+type DeleteTarget =
+  | { kind: "loan"; data: DbLoanItem }
+  | { kind: "consumption"; data: DbConsumptionItem };
 
 export default function Prestamos() {
-  const { isAdmin, canAccess, loading: authLoading } = useAuth();
+  const { profile, user, isAdmin, canAccess, canDelete, loading: authLoading } = useAuth();
+  const actorName = profile?.full_name || user?.email || "Usuario";
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [activeTab, setActiveTab] = useState<"prestamos" | "consumo">("prestamos");
   const [searchTerm, setSearchTerm] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -163,8 +173,9 @@ export default function Prestamos() {
     if (!confirm(`¿Confirmas la devolución de "${loan.item}"?`)) return;
 
     try {
-      if (isDbConnected && loan.id) {
-        await returnLoan(loan.id, loan.sku, loan.quantity || 1);
+      if (isDbConnected && loan.id && loan.productId) {
+        await returnLoan(loan.id, loan.productId, loan.quantity || 1);
+        setAvailableProducts(await getProducts());
       }
       setLoans((prev) =>
         prev.map((l) => (l.id === loan.id ? { ...l, status: "returned" } : l))
@@ -176,6 +187,29 @@ export default function Prestamos() {
     }
   };
 
+  const handleConfirmDelete = async () => {
+    if (!deleteTarget || !canDelete) return;
+    setIsDeleting(true);
+    try {
+      if (deleteTarget.kind === "loan") {
+        if (isDbConnected) await deleteLoan(deleteTarget.data.id, true);
+        setLoans((prev) => prev.filter((l) => l.id !== deleteTarget.data.id));
+      } else {
+        if (isDbConnected) await deleteConsumption(deleteTarget.data.id, true);
+        setConsumptions((prev) => prev.filter((c) => c.id !== deleteTarget.data.id));
+      }
+      if (isDbConnected) {
+        setAvailableProducts(await getProducts());
+      }
+      setDeleteTarget(null);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "No se pudo eliminar el registro";
+      alert("Error: " + msg);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   const handleCreateMovement = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!selectedProductId || !formUser.trim()) {
@@ -183,11 +217,23 @@ export default function Prestamos() {
       return;
     }
 
-    const prod = availableProducts.find((p) => p.id === selectedProductId) || {
-      id: selectedProductId,
-      name: "Artículo Seleccionado",
-      sku: "SKU-TEMP",
-    };
+    const prod = availableProducts.find((p) => p.id === selectedProductId);
+    const qty = Number(formQty) || 1;
+
+    if (!prod) {
+      alert("Por favor selecciona un producto válido.");
+      return;
+    }
+
+    if (qty <= 0) {
+      alert("La cantidad debe ser mayor a 0.");
+      return;
+    }
+
+    if (prod.stock < qty) {
+      alert(`Stock insuficiente para "${prod.name}". Disponible: ${prod.stock} unidad(es).`);
+      return;
+    }
 
     setIsSaving(true);
     try {
@@ -196,19 +242,20 @@ export default function Prestamos() {
           const res = await createLoan({
             productId: selectedProductId,
             loanedTo: formUser.trim(),
-            deliveredBy: "Admin",
-            quantity: Number(formQty) || 1,
+            deliveredBy: actorName,
+            quantity: qty,
           });
           setLoans((prev) => [
             {
               id: res?.id || `L-${Date.now().toString().slice(-4)}`,
+              productId: selectedProductId,
               item: prod.name,
               sku: prod.sku,
               user: formUser.trim(),
               date: new Date().toLocaleDateString(),
               status: "active",
               type: "Préstamo",
-              quantity: Number(formQty) || 1,
+              quantity: qty,
             },
             ...prev,
           ]);
@@ -222,7 +269,7 @@ export default function Prestamos() {
               date: new Date().toLocaleDateString(),
               status: "active",
               type: "Préstamo",
-              quantity: Number(formQty) || 1,
+              quantity: qty,
             },
             ...prev,
           ]);
@@ -232,8 +279,8 @@ export default function Prestamos() {
           const res = await createConsumption({
             productId: selectedProductId,
             requestedBy: formUser.trim(),
-            dispatchedBy: "Admin",
-            quantity: Number(formQty) || 1,
+            dispatchedBy: actorName,
+            quantity: qty,
             reason: formReason.trim() || "Consumo regular",
           });
           setConsumptions((prev) => [
@@ -243,7 +290,7 @@ export default function Prestamos() {
               sku: prod.sku,
               user: formUser.trim(),
               date: new Date().toLocaleDateString(),
-              qty: Number(formQty) || 1,
+              qty: qty,
               reason: formReason.trim() || "Consumo regular",
               type: "Consumo Local",
             },
@@ -257,13 +304,17 @@ export default function Prestamos() {
               sku: prod.sku,
               user: formUser.trim(),
               date: new Date().toLocaleDateString(),
-              qty: Number(formQty) || 1,
+              qty: qty,
               reason: formReason.trim() || "Consumo regular",
               type: "Consumo Local",
             },
             ...prev,
           ]);
         }
+      }
+
+      if (isDbConnected) {
+        setAvailableProducts(await getProducts());
       }
 
       setIsModalOpen(false);
@@ -447,6 +498,15 @@ export default function Prestamos() {
                       >
                         Registrar Devolución
                       </button>
+                      {canDelete && (
+                        <button
+                          onClick={() => setDeleteTarget({ kind: "loan", data: loan })}
+                          className="text-red-400 hover:text-red-300 p-1.5 border border-red-400/20 bg-red-400/10 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity"
+                          title="Eliminar préstamo"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))
@@ -492,18 +552,29 @@ export default function Prestamos() {
                       <div className="text-xs text-zinc-500 mt-0.5">{cons.reason}</div>
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <button
-                        onClick={() =>
-                          handlePrintVoucher(
-                            "CONSUMO INTERNO",
-                            cons as unknown as Record<string, string | number>
-                          )
-                        }
-                        className="text-blue-400 hover:text-blue-300 font-medium p-1.5 border border-blue-400/20 bg-blue-400/10 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center"
-                        title="Imprimir Vale de Consumo"
-                      >
-                        <Printer className="w-4 h-4" />
-                      </button>
+                      <div className="inline-flex items-center gap-2">
+                        <button
+                          onClick={() =>
+                            handlePrintVoucher(
+                              "CONSUMO INTERNO",
+                              cons as unknown as Record<string, string | number>
+                            )
+                          }
+                          className="text-blue-400 hover:text-blue-300 font-medium p-1.5 border border-blue-400/20 bg-blue-400/10 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center"
+                          title="Imprimir Vale de Consumo"
+                        >
+                          <Printer className="w-4 h-4" />
+                        </button>
+                        {canDelete && (
+                          <button
+                            onClick={() => setDeleteTarget({ kind: "consumption", data: cons })}
+                            className="text-red-400 hover:text-red-300 p-1.5 border border-red-400/20 bg-red-400/10 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center"
+                            title="Eliminar consumo"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -512,6 +583,27 @@ export default function Prestamos() {
           </table>
         )}
       </div>
+
+      {/* Confirmación de eliminación */}
+      <ConfirmDeleteModal
+        open={Boolean(deleteTarget)}
+        title={deleteTarget?.kind === "loan" ? "Eliminar Préstamo" : "Eliminar Consumo"}
+        itemLabel={
+          deleteTarget
+            ? deleteTarget.kind === "loan"
+              ? `${deleteTarget.data.item} — ${deleteTarget.data.quantity || 1} unidad(es) prestadas a ${deleteTarget.data.user}`
+              : `${deleteTarget.data.item} — ${deleteTarget.data.qty} unidad(es) para ${deleteTarget.data.user}`
+            : ""
+        }
+        warning={
+          deleteTarget?.kind === "loan"
+            ? "Las unidades prestadas se regresarán automáticamente al stock disponible del producto."
+            : "Las unidades consumidas se regresarán automáticamente al stock disponible del producto."
+        }
+        loading={isDeleting}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
 
       {/* Modal de Salida */}
       {isModalOpen && (
@@ -554,8 +646,13 @@ export default function Prestamos() {
                         : "No hay productos en inventario. Registra uno primero en Productos."}
                     </option>
                     {availableProducts.map((p) => (
-                      <option key={p.id} value={p.id} className="bg-zinc-900">
-                        {p.name} (Stock: {p.stock})
+                      <option
+                        key={p.id}
+                        value={p.id}
+                        disabled={p.stock <= 0}
+                        className="bg-zinc-900 disabled:text-zinc-600"
+                      >
+                        {p.name} ({p.stock > 0 ? `Stock: ${p.stock}` : "Agotado"})
                       </option>
                     ))}
                   </select>
@@ -568,6 +665,7 @@ export default function Prestamos() {
                     <input
                       type="number"
                       min={1}
+                      max={availableProducts.find((p) => p.id === selectedProductId)?.stock || undefined}
                       required
                       value={formQty}
                       onChange={(e) => setFormQty(Number(e.target.value))}

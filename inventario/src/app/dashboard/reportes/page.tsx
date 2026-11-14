@@ -14,23 +14,32 @@ import {
   Filter,
   CheckCircle2,
   Package2,
+  Trash2,
+  ShieldAlert,
 } from "lucide-react";
 import Link from "next/link";
 import {
   getAvailableMonths,
   getMonthlyCategoryReport,
+  deleteReportMovement,
   MonthlyAnalysisReport,
+  MovementReportItem,
 } from "@/lib/services/reports";
 import { isSupabaseConfigured } from "@/lib/supabase/client";
 import { useAuth } from "@/context/AuthContext";
 import AccessDenied from "@/components/AccessDenied";
+import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
 
 export default function Reportes() {
-  const { isAdmin, canAccess, loading: authLoading } = useAuth();
+  const { isAdmin, canAccess, canDelete, loading: authLoading } = useAuth();
+  const [movementToDelete, setMovementToDelete] = useState<MovementReportItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [reloadKey, setReloadKey] = useState(0);
 
   const monthOptions = getAvailableMonths(12);
   const [selectedMonthKey, setSelectedMonthKey] = useState<string>(monthOptions[0].key);
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [distributionMode, setDistributionMode] = useState<"stock" | "exits">("stock");
 
   const [loading, setLoading] = useState(true);
   const [isDbConnected, setIsDbConnected] = useState(false);
@@ -53,7 +62,25 @@ export default function Reportes() {
     }
 
     loadReport();
-  }, [selectedMonthKey, selectedCategory]);
+  }, [selectedMonthKey, selectedCategory, reloadKey]);
+
+  const handleConfirmDeleteMovement = async () => {
+    if (!movementToDelete || !canDelete) return;
+    setIsDeleting(true);
+    try {
+      if (isDbConnected) {
+        await deleteReportMovement(movementToDelete.id, movementToDelete.type);
+      }
+      setMovementToDelete(null);
+      // Recalcular el reporte completo (stock histórico y totales)
+      setReloadKey((k) => k + 1);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "No se pudo eliminar el movimiento";
+      alert("Error: " + msg);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const handleExportPDF = () => {
     if (!reportData) return;
@@ -235,9 +262,9 @@ export default function Reportes() {
           </div>
 
           <script>
+            window.onafterprint = () => window.close();
             setTimeout(() => {
               window.print();
-              window.close();
             }, 800);
           </script>
         </body>
@@ -373,17 +400,46 @@ export default function Reportes() {
       {selectedCategory === "all" ? (
         /* VISTA GENERAL: Consolidado de Todas las Categorías */
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          {/* Gráfico de Distribución de Stock por Categoría */}
+          {/* Gráfico de Distribución de Stock / Salidas por Categoría */}
           <div className="bg-white/5 border border-white/10 backdrop-blur-md rounded-2xl p-6 lg:col-span-2 flex flex-col">
-            <div className="flex items-center justify-between mb-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
               <div className="flex items-center gap-3">
                 <div className="w-10 h-10 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center text-blue-400">
                   <BarChart3 className="w-5 h-5" />
                 </div>
                 <div>
                   <h2 className="text-xl font-bold">Distribución por Categorías</h2>
-                  <p className="text-sm text-zinc-400">Existencias en {currentMonthOption.label}</p>
+                  <p className="text-sm text-zinc-400">
+                    {distributionMode === "stock"
+                      ? `Proporción de existencias en almacén · ${currentMonthOption.label}`
+                      : `Proporción de salidas (préstamos + consumo) · ${currentMonthOption.label}`}
+                  </p>
                 </div>
+              </div>
+
+              <div className="inline-flex p-1 rounded-xl bg-black/40 border border-white/10 self-start sm:self-auto">
+                <button
+                  type="button"
+                  onClick={() => setDistributionMode("stock")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    distributionMode === "stock"
+                      ? "bg-blue-500 text-white"
+                      : "text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  % de Stock
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDistributionMode("exits")}
+                  className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                    distributionMode === "exits"
+                      ? "bg-rose-500 text-white"
+                      : "text-zinc-400 hover:text-white"
+                  }`}
+                >
+                  % de Salidas
+                </button>
               </div>
             </div>
 
@@ -396,41 +452,71 @@ export default function Reportes() {
               <p className="text-zinc-500 text-center py-12">No hay categorías registradas aún.</p>
             ) : (
               <div className="space-y-4 my-auto">
-                {reportData?.categoriesSummary.map((cat, i) => (
-                  <div
-                    key={i}
-                    onClick={() => setSelectedCategory(cat.name)}
-                    className="p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-transparent hover:border-white/10 cursor-pointer transition-all group"
-                  >
-                    <div className="flex justify-between items-center mb-1.5 text-sm">
-                      <div className="flex items-center gap-2">
-                        <span className="font-semibold text-white group-hover:text-blue-400 transition-colors">
-                          {cat.name}
-                        </span>
-                        <span className="text-xs text-zinc-500">
-                          ({cat.productsCount} {cat.productsCount === 1 ? "artículo" : "artículos"})
-                        </span>
+                {reportData?.categoriesSummary.map((cat, i) => {
+                  const pct = distributionMode === "stock" ? cat.percentage : cat.exitsPercentage;
+                  return (
+                    <div
+                      key={i}
+                      onClick={() => setSelectedCategory(cat.name)}
+                      className="p-3 rounded-xl bg-white/5 hover:bg-white/10 border border-transparent hover:border-white/10 cursor-pointer transition-all group"
+                    >
+                      <div className="flex justify-between items-center mb-1.5 text-sm">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-white group-hover:text-blue-400 transition-colors">
+                            {cat.name}
+                          </span>
+                          <span className="text-xs text-zinc-500">
+                            ({cat.productsCount} {cat.productsCount === 1 ? "artículo" : "artículos"})
+                          </span>
+                        </div>
+                        <div className="flex items-center gap-4 text-xs">
+                          <span className="text-zinc-400">
+                            Stock: <strong className="text-white text-sm">{cat.stockInMonth}</strong>
+                          </span>
+                          <span className="text-rose-400">
+                            Salidas: <strong>{cat.exitsInMonth}</strong>
+                          </span>
+                          <span
+                            className="font-mono text-zinc-200 w-24 text-right"
+                            title={
+                              distributionMode === "stock"
+                                ? "Porcentaje del stock total en almacén"
+                                : "Porcentaje del total de salidas del mes"
+                            }
+                          >
+                            {pct}%{" "}
+                            <span className="text-[10px] text-zinc-500">
+                              {distributionMode === "stock" ? "stock" : "salidas"}
+                            </span>
+                          </span>
+                        </div>
                       </div>
-                      <div className="flex items-center gap-4 text-xs">
-                        <span className="text-zinc-400">
-                          Stock: <strong className="text-white text-sm">{cat.stockInMonth}</strong>
-                        </span>
-                        <span className="text-rose-400">
-                          Salidas: <strong>{cat.exitsInMonth}</strong>
-                        </span>
-                        <span className="font-mono text-zinc-300 w-12 text-right">
-                          {cat.percentage}%
-                        </span>
+                      <div className="w-full bg-black/40 rounded-full h-2.5 overflow-hidden">
+                        <div
+                          className={`h-full ${
+                            distributionMode === "exits" ? "bg-rose-500" : cat.color
+                          } rounded-full transition-all duration-700`}
+                          style={{ width: `${pct === 0 ? 0 : Math.max(2, pct)}%` }}
+                        ></div>
                       </div>
                     </div>
-                    <div className="w-full bg-black/40 rounded-full h-2.5 overflow-hidden">
-                      <div
-                        className={`h-full ${cat.color} rounded-full transition-all duration-700`}
-                        style={{ width: `${Math.max(5, cat.percentage)}%` }}
-                      ></div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
+
+                <div className="pt-3 mt-2 border-t border-white/10 flex flex-wrap items-center justify-between gap-3 text-xs text-zinc-400">
+                  <span>
+                    Total en almacén:{" "}
+                    <strong className="text-white">{reportData?.metrics.totalStockInMonth ?? 0}</strong> u.
+                  </span>
+                  <span>
+                    Salidas del mes:{" "}
+                    <strong className="text-rose-400">{reportData?.metrics.totalExitsInMonth ?? 0}</strong> u.
+                  </span>
+                  <span>
+                    Ingresos del mes:{" "}
+                    <strong className="text-emerald-400">{reportData?.metrics.totalEntriesInMonth ?? 0}</strong> u.
+                  </span>
+                </div>
               </div>
             )}
           </div>
@@ -606,12 +692,13 @@ export default function Reportes() {
               <th className="px-6 py-4 text-center">Cantidad</th>
               <th className="px-6 py-4">Responsable</th>
               <th className="px-6 py-4">Detalle / Motivo</th>
+              {canDelete && <th className="px-6 py-4 text-right">Acciones</th>}
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
             {loading ? (
               <tr>
-                <td colSpan={7} className="px-6 py-12 text-center text-zinc-500">
+                <td colSpan={canDelete ? 8 : 7} className="px-6 py-12 text-center text-zinc-500">
                   <div className="flex items-center justify-center gap-2">
                     <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
                     <span>Cargando movimientos...</span>
@@ -620,13 +707,13 @@ export default function Reportes() {
               </tr>
             ) : reportData?.movements.length === 0 ? (
               <tr>
-                <td colSpan={7} className="px-6 py-12 text-center text-zinc-500">
+                <td colSpan={canDelete ? 8 : 7} className="px-6 py-12 text-center text-zinc-500">
                   No se registraron movimientos en este período para la selección actual.
                 </td>
               </tr>
             ) : (
               reportData?.movements.map((mov) => (
-                <tr key={mov.id} className="hover:bg-white/5 transition-colors">
+                <tr key={mov.id} className="hover:bg-white/5 transition-colors group">
                   <td className="px-6 py-4 text-zinc-400 flex items-center gap-2">
                     <Calendar className="w-4 h-4" />
                     {mov.date}
@@ -660,12 +747,83 @@ export default function Reportes() {
                   </td>
                   <td className="px-6 py-4 text-zinc-300">{mov.user}</td>
                   <td className="px-6 py-4 text-xs text-zinc-400">{mov.reason}</td>
+                  {canDelete && (
+                    <td className="px-6 py-4 text-right">
+                      <button
+                        onClick={() => setMovementToDelete(mov)}
+                        className="text-red-400 hover:text-red-300 p-1.5 border border-red-400/20 bg-red-400/10 rounded-lg opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center"
+                        title="Eliminar movimiento"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))
             )}
           </tbody>
         </table>
       </div>
+
+      {/* Bitácora de Auditoría del Sistema */}
+      <div className="bg-white/5 border border-white/10 backdrop-blur-md rounded-2xl overflow-hidden mt-8">
+        <div className="p-6 border-b border-white/10 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+            <ShieldAlert className="w-5 h-5" />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold">Auditoría de Acciones en {currentMonthOption.label}</h2>
+            <p className="text-sm text-zinc-400">
+              Registro de altas, ediciones, eliminaciones, préstamos y cambios de permisos.
+            </p>
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="p-8 text-center text-zinc-500">Cargando bitácora de auditoría...</div>
+        ) : !reportData?.auditLogs || reportData.auditLogs.length === 0 ? (
+          <div className="p-8 text-center text-zinc-500 text-sm">
+            No hay eventos de auditoría registrados en este período.
+          </div>
+        ) : (
+          <div className="divide-y divide-white/5 max-h-80 overflow-y-auto">
+            {reportData.auditLogs.map((log) => (
+              <div key={log.id} className="px-6 py-3.5 flex items-center justify-between gap-4 hover:bg-white/5">
+                <p className="text-sm text-zinc-200">{log.details}</p>
+                <span className="text-xs text-zinc-500 font-mono shrink-0">{log.date}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Confirmación de eliminación */}
+      <ConfirmDeleteModal
+        open={Boolean(movementToDelete)}
+        title="Eliminar Movimiento"
+        itemLabel={
+          movementToDelete
+            ? `${movementToDelete.date} · ${
+                movementToDelete.type === "loan"
+                  ? "Préstamo"
+                  : movementToDelete.type === "consumption"
+                  ? "Consumo"
+                  : "Ingreso"
+              } · ${movementToDelete.quantity}x ${movementToDelete.productName} (${movementToDelete.user})`
+            : ""
+        }
+        description="¿Seguro que deseas eliminar este movimiento del historial?"
+        warning={
+          movementToDelete?.type === "loan"
+            ? "Si el préstamo sigue activo, las unidades se regresarán al stock. El reporte se recalculará."
+            : movementToDelete?.type === "consumption"
+            ? "Las unidades consumidas se regresarán al stock del producto. El reporte se recalculará."
+            : "El movimiento se borrará del historial y el reporte se recalculará."
+        }
+        loading={isDeleting}
+        onConfirm={handleConfirmDeleteMovement}
+        onCancel={() => setMovementToDelete(null)}
+      />
     </main>
   );
 }

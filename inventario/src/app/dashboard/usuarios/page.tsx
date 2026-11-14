@@ -16,6 +16,7 @@ import {
   Sliders,
   CheckCircle2,
   XCircle,
+  Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import { useAuth } from "@/context/AuthContext";
@@ -39,6 +40,7 @@ export default function UsuariosPage() {
   const [newCanInventory, setNewCanInventory] = useState(true);
   const [newCanLoans, setNewCanLoans] = useState(true);
   const [newCanReports, setNewCanReports] = useState(false);
+  const [newCanDelete, setNewCanDelete] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -47,6 +49,7 @@ export default function UsuariosPage() {
   const [editCanInventory, setEditCanInventory] = useState(true);
   const [editCanLoans, setEditCanLoans] = useState(true);
   const [editCanReports, setEditCanReports] = useState(false);
+  const [editCanDelete, setEditCanDelete] = useState(false);
   const [editIsActive, setEditIsActive] = useState(true);
   const [isUpdating, setIsUpdating] = useState(false);
 
@@ -69,6 +72,7 @@ export default function UsuariosPage() {
     setEditCanInventory(Boolean(user.can_access_inventory));
     setEditCanLoans(Boolean(user.can_access_loans));
     setEditCanReports(Boolean(user.can_access_reports));
+    setEditCanDelete(Boolean(user.can_delete));
     setEditIsActive(user.is_active !== false);
   };
 
@@ -83,6 +87,7 @@ export default function UsuariosPage() {
         can_access_inventory: editCanInventory,
         can_access_loans: editCanLoans,
         can_access_reports: editCanReports,
+        can_delete: editCanDelete,
         is_active: editIsActive,
       });
 
@@ -113,6 +118,7 @@ export default function UsuariosPage() {
         canAccessInventory: newCanInventory,
         canAccessLoans: newCanLoans,
         canAccessReports: newCanReports,
+        canDelete: newCanDelete,
       });
 
       // Recargar lista de usuarios
@@ -127,6 +133,7 @@ export default function UsuariosPage() {
       setNewCanInventory(true);
       setNewCanLoans(true);
       setNewCanReports(false);
+      setNewCanDelete(false);
       setIsCreateModalOpen(false);
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "Error al crear usuario";
@@ -281,6 +288,11 @@ export default function UsuariosPage() {
                         {u.can_access_reports && (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-white/5 border border-white/10 text-xs text-zinc-300">
                             <BarChart3 className="w-3 h-3 text-emerald-400" /> Reportes
+                          </span>
+                        )}
+                        {u.can_delete && (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-red-500/10 border border-red-500/20 text-xs text-red-300">
+                            <Trash2 className="w-3 h-3 text-red-400" /> Puede eliminar
                           </span>
                         )}
                         {!u.can_access_inventory && !u.can_access_loans && !u.can_access_reports && (
@@ -459,6 +471,22 @@ export default function UsuariosPage() {
                           className="w-5 h-5 rounded border-zinc-700 bg-zinc-900 text-blue-500 focus:ring-blue-500/50"
                         />
                       </label>
+
+                      <label className="flex items-center justify-between p-3 rounded-xl bg-red-500/5 border border-red-500/15 hover:border-red-500/30 cursor-pointer transition-all">
+                        <div className="flex items-center gap-3">
+                          <Trash2 className="w-4 h-4 text-red-400" />
+                          <div>
+                            <p className="text-sm font-medium text-white">Permiso para Eliminar</p>
+                            <p className="text-xs text-zinc-400">Borrar productos, préstamos, consumos y movimientos</p>
+                          </div>
+                        </div>
+                        <input
+                          type="checkbox"
+                          checked={newCanDelete}
+                          onChange={(e) => setNewCanDelete(e.target.checked)}
+                          className="w-5 h-5 rounded border-zinc-700 bg-zinc-900 text-red-500 focus:ring-red-500/50"
+                        />
+                      </label>
                     </div>
                   </div>
                 )}
@@ -589,6 +617,25 @@ export default function UsuariosPage() {
                         />
                       </label>
                     </div>
+
+                    <label className="text-xs font-semibold uppercase tracking-wider text-zinc-400 mt-5 mb-3 block">
+                      Acciones Especiales:
+                    </label>
+                    <label className="flex items-center justify-between p-3 rounded-xl bg-red-500/5 border border-red-500/15 hover:border-red-500/30 cursor-pointer">
+                      <div className="flex items-center gap-3">
+                        <Trash2 className="w-4 h-4 text-red-400" />
+                        <div>
+                          <p className="text-sm font-medium text-white">Permiso para Eliminar</p>
+                          <p className="text-xs text-zinc-400">Borrar productos, préstamos, consumos y movimientos</p>
+                        </div>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={editCanDelete}
+                        onChange={(e) => setEditCanDelete(e.target.checked)}
+                        className="w-5 h-5 rounded border-zinc-700 bg-zinc-900 text-red-500"
+                      />
+                    </label>
                   </div>
                 )}
               </div>

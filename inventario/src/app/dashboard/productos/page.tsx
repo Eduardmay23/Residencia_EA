@@ -22,13 +22,16 @@ import {
   Tag,
   Hash,
   Calendar,
+  Trash2,
+  Pencil,
 } from "lucide-react";
 import Link from "next/link";
-import { getProducts, createProduct } from "@/lib/services/products";
+import { getProducts, createProduct, updateProduct, deleteProduct } from "@/lib/services/products";
 import { getCategories, createCategory } from "@/lib/services/categories";
 import { isSupabaseConfigured } from "@/lib/supabase/client";
 import { useAuth } from "@/context/AuthContext";
 import AccessDenied from "@/components/AccessDenied";
+import ConfirmDeleteModal from "@/components/ConfirmDeleteModal";
 
 interface ProductItem {
   id?: string;
@@ -44,7 +47,8 @@ interface ProductItem {
 }
 
 export default function Productos() {
-  const { isAdmin, canAccess, loading: authLoading } = useAuth();
+  const { profile, user, isAdmin, canAccess, canDelete, loading: authLoading } = useAuth();
+  const actorName = profile?.full_name || user?.email || "Usuario";
   const [products, setProducts] = useState<ProductItem[]>([]);
   const [categories, setCategories] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -57,6 +61,9 @@ export default function Productos() {
 
   // Modals
   const [previewProduct, setPreviewProduct] = useState<ProductItem | null>(null);
+  const [editingProduct, setEditingProduct] = useState<ProductItem | null>(null);
+  const [productToDelete, setProductToDelete] = useState<ProductItem | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [productImage, setProductImage] = useState<string | null>(null);
@@ -171,6 +178,27 @@ export default function Productos() {
     }
   };
 
+  const openCreateModal = () => {
+    setEditingProduct(null);
+    setFormName("");
+    setFormSku("");
+    setFormStock(0);
+    setFormCategory("");
+    setProductImage(null);
+    setIsModalOpen(true);
+  };
+
+  const openEditModal = (item: ProductItem) => {
+    setEditingProduct(item);
+    setFormName(item.name);
+    setFormSku(item.sku);
+    setFormStock(item.stock);
+    setFormCategory(item.cat);
+    setProductImage(item.image_url || null);
+    setPreviewProduct(null);
+    setIsModalOpen(true);
+  };
+
   const handleSaveProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!formName.trim() || !formSku.trim() || !formCategory) {
@@ -180,13 +208,67 @@ export default function Productos() {
 
     setIsSavingProduct(true);
     try {
-      if (isDbConnected) {
+      if (editingProduct) {
+        if (isDbConnected && editingProduct.id) {
+          const updated = await updateProduct(editingProduct.id, {
+            name: formName.trim(),
+            sku: formSku.trim(),
+            category_name: formCategory,
+            stock: Number(formStock) || 0,
+            image_url: productImage,
+            updatedBy: actorName,
+          });
+          if (updated) {
+            setProducts((prev) =>
+              prev.map((p) =>
+                p.id === editingProduct.id
+                  ? {
+                      id: updated.id,
+                      name: updated.name,
+                      sku: updated.sku,
+                      cat: updated.category,
+                      stock: updated.stock,
+                      loaned: updated.loaned,
+                      lowStockThreshold: updated.lowStockThreshold,
+                      image_url: updated.image_url,
+                      created_at: updated.created_at,
+                      status:
+                        updated.stock === 0
+                          ? "danger"
+                          : updated.stock < (updated.lowStockThreshold || 5)
+                          ? "warning"
+                          : "ok",
+                    }
+                  : p
+              )
+            );
+          }
+        } else {
+          const newStock = Number(formStock) || 0;
+          setProducts((prev) =>
+            prev.map((p) =>
+              p.sku === editingProduct.sku
+                ? {
+                    ...p,
+                    name: formName.trim(),
+                    sku: formSku.trim(),
+                    cat: formCategory,
+                    stock: newStock,
+                    image_url: productImage,
+                    status: newStock === 0 ? "danger" : newStock < 5 ? "warning" : "ok",
+                  }
+                : p
+            )
+          );
+        }
+      } else if (isDbConnected) {
         const created = await createProduct({
           name: formName.trim(),
           sku: formSku.trim(),
           category_name: formCategory,
           stock: Number(formStock) || 0,
           image_url: productImage,
+          createdBy: actorName,
         });
 
         if (created) {
@@ -223,6 +305,7 @@ export default function Productos() {
       }
 
       // Limpiar formulario y cerrar
+      setEditingProduct(null);
       setFormName("");
       setFormSku("");
       setFormStock(0);
@@ -265,6 +348,30 @@ export default function Productos() {
     setSearchTerm("");
     setCategoryFilter("all");
     setStatusFilter("all");
+  };
+
+  const handleConfirmDelete = async () => {
+    if (!productToDelete || !canDelete) return;
+    setIsDeleting(true);
+    try {
+      if (isDbConnected && productToDelete.id) {
+        await deleteProduct(productToDelete.id);
+      }
+      setProducts((prev) =>
+        prev.filter((p) =>
+          productToDelete.id ? p.id !== productToDelete.id : p.sku !== productToDelete.sku
+        )
+      );
+      if (previewProduct && previewProduct.sku === productToDelete.sku) {
+        setPreviewProduct(null);
+      }
+      setProductToDelete(null);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "No se pudo eliminar el producto";
+      alert("Error: " + msg);
+    } finally {
+      setIsDeleting(false);
+    }
   };
 
   const hasActiveFilters = searchTerm !== "" || categoryFilter !== "all" || statusFilter !== "all";
@@ -351,7 +458,7 @@ export default function Productos() {
             Exportar
           </button>
           <button
-            onClick={() => setIsModalOpen(true)}
+            onClick={openCreateModal}
             className="flex items-center gap-2 px-4 py-2 bg-white text-black hover:bg-zinc-200 rounded-lg text-sm font-semibold transition-all shadow-[0_0_15px_rgba(255,255,255,0.2)] hover:scale-105"
           >
             <Plus className="w-4 h-4" />
@@ -548,17 +655,43 @@ export default function Productos() {
                   </td>
                   <td className="px-6 py-4 text-center text-zinc-400">{item.loaned}</td>
                   <td className="px-6 py-4 text-right">
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setPreviewProduct(item);
-                      }}
-                      className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-blue-400 hover:text-blue-300 bg-blue-500/5 hover:bg-blue-500/10 border border-blue-500/20 rounded-lg transition-all"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      <span>Vista previa</span>
-                    </button>
+                    <div className="inline-flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setPreviewProduct(item);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-blue-400 hover:text-blue-300 bg-blue-500/5 hover:bg-blue-500/10 border border-blue-500/20 rounded-lg transition-all"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Vista previa</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          openEditModal(item);
+                        }}
+                        className="p-1.5 text-zinc-300 hover:text-white bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg transition-all"
+                        title="Editar producto o ajustar stock"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      {canDelete && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setProductToDelete(item);
+                          }}
+                          className="p-1.5 text-red-400 hover:text-red-300 bg-red-500/5 hover:bg-red-500/15 border border-red-500/20 rounded-lg transition-all"
+                          title="Eliminar producto"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
+                    </div>
                   </td>
                 </tr>
               ))
@@ -739,7 +872,27 @@ export default function Productos() {
             </div>
 
             {/* Modal Footer */}
-            <div className="p-4 border-t border-white/10 bg-white/[0.02] flex justify-end gap-3">
+            <div className="p-4 border-t border-white/10 bg-white/[0.02] flex justify-between items-center gap-3">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => openEditModal(previewProduct)}
+                  className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-blue-400 hover:text-blue-300 bg-blue-500/10 hover:bg-blue-500/20 border border-blue-500/20 rounded-xl transition-colors"
+                >
+                  <Pencil className="w-4 h-4" />
+                  Editar / Stock
+                </button>
+                {canDelete && (
+                  <button
+                    type="button"
+                    onClick={() => setProductToDelete(previewProduct)}
+                    className="inline-flex items-center gap-2 px-4 py-2.5 text-sm font-semibold text-red-400 hover:text-red-300 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-xl transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                    Eliminar
+                  </button>
+                )}
+              </div>
               <button
                 type="button"
                 onClick={() => setPreviewProduct(null)}
@@ -752,13 +905,31 @@ export default function Productos() {
         </div>
       )}
 
+      {/* Confirmación de eliminación */}
+      <ConfirmDeleteModal
+        open={Boolean(productToDelete)}
+        title="Eliminar Producto"
+        itemLabel={productToDelete ? `${productToDelete.name} (SKU: ${productToDelete.sku})` : ""}
+        description="¿Seguro que deseas eliminar este producto del inventario?"
+        warning={
+          productToDelete && productToDelete.loaned > 0
+            ? `Este producto tiene ${productToDelete.loaned} unidad(es) prestadas. Al eliminarlo también se borrarán sus préstamos y consumos registrados.`
+            : "También se eliminará su historial de préstamos y consumos asociados."
+        }
+        loading={isDeleting}
+        onConfirm={handleConfirmDelete}
+        onCancel={() => setProductToDelete(null)}
+      />
+
       {/* Product Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
           <div className="bg-[#0a0a0a] border border-white/10 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden">
             <div className="p-6 border-b border-white/10 flex justify-between items-start">
               <div>
-                <h2 className="text-xl font-bold">Registrar Nuevo Producto</h2>
+                <h2 className="text-xl font-bold">
+                  {editingProduct ? "Editar Producto / Ajustar Stock" : "Registrar Nuevo Producto"}
+                </h2>
                 <p className="text-sm text-zinc-400">
                   {isDbConnected
                     ? "Se guardará directamente en tu base de datos de Supabase."
@@ -766,7 +937,10 @@ export default function Productos() {
                 </p>
               </div>
               <button
-                onClick={() => setIsModalOpen(false)}
+                onClick={() => {
+                  setIsModalOpen(false);
+                  setEditingProduct(null);
+                }}
                 className="text-zinc-500 hover:text-white"
               >
                 <X className="w-5 h-5" />
@@ -804,7 +978,7 @@ export default function Productos() {
                   </div>
                   <div>
                     <label className="text-sm font-medium text-zinc-300 mb-1.5 block">
-                      Stock Inicial
+                      {editingProduct ? "Stock en Almacén" : "Stock Inicial"}
                     </label>
                     <input
                       type="number"
@@ -895,6 +1069,7 @@ export default function Productos() {
                   type="button"
                   onClick={() => {
                     setIsModalOpen(false);
+                    setEditingProduct(null);
                     setProductImage(null);
                   }}
                   className="px-4 py-2 text-sm font-medium text-zinc-300 hover:text-white transition-colors"
@@ -907,7 +1082,13 @@ export default function Productos() {
                   className="px-4 py-2 bg-white text-black rounded-lg text-sm font-semibold hover:bg-zinc-200 transition-colors flex items-center gap-2 disabled:opacity-50"
                 >
                   {isSavingProduct && <Loader2 className="w-4 h-4 animate-spin" />}
-                  <span>{isSavingProduct ? "Guardando..." : "Guardar Producto"}</span>
+                  <span>
+                    {isSavingProduct
+                      ? "Guardando..."
+                      : editingProduct
+                      ? "Guardar Cambios"
+                      : "Guardar Producto"}
+                  </span>
                 </button>
               </div>
             </form>

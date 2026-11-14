@@ -2,10 +2,14 @@
 -- SISTEMA DE GESTIÓN DE USUARIOS Y PERMISOS GRANULARES (SUPABASE)
 -- ==============================================================================
 
--- 1. Asegurar columnas de email y estado activo en user_profiles
+-- 1. Asegurar columnas de email, estado activo y permiso de eliminación en user_profiles
 ALTER TABLE public.user_profiles 
   ADD COLUMN IF NOT EXISTS email TEXT,
-  ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true;
+  ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT true,
+  ADD COLUMN IF NOT EXISTS can_delete BOOLEAN DEFAULT false;
+
+-- Si el usuario ya es admin, asegurar que tenga can_delete = true
+UPDATE public.user_profiles SET can_delete = true WHERE role = 'admin';
 
 -- Ajustar la restricción del rol para permitir admin, editor, viewer
 ALTER TABLE public.user_profiles 
@@ -33,6 +37,7 @@ BEGIN
     can_access_inventory,
     can_access_loans,
     can_access_reports,
+    can_delete,
     is_active
   )
   VALUES (
@@ -54,6 +59,10 @@ BEGIN
     CASE 
       WHEN is_first_user THEN true
       ELSE COALESCE((new.raw_user_meta_data->>'can_access_reports')::boolean, false)
+    END,
+    CASE 
+      WHEN is_first_user THEN true
+      ELSE COALESCE((new.raw_user_meta_data->>'can_delete')::boolean, false)
     END,
     true
   )
