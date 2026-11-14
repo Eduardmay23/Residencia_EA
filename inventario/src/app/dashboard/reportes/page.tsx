@@ -373,62 +373,104 @@ export default function Reportes() {
 
       {/* Métricas Principales del Mes */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-        <div className="bg-white/5 border border-white/10 backdrop-blur-sm rounded-3xl p-6 hover:border-white/20 transition-all">
+        {/* Tarjeta 1: Stock */}
+        <div className="relative overflow-hidden bg-gradient-to-b from-blue-500/10 via-white/5 to-transparent border border-blue-500/20 backdrop-blur-md rounded-3xl p-6 hover:border-blue-500/40 transition-all shadow-lg shadow-blue-500/5">
           <div className="flex justify-between items-start mb-4">
-            <div className="p-3 rounded-2xl bg-blue-500/10 text-blue-400">
+            <div className="w-12 h-12 rounded-2xl bg-blue-500/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
               <Layers className="w-6 h-6" />
             </div>
-            <span className="text-xs text-zinc-500 font-mono">Corte de mes</span>
+            <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+              Existencias
+            </span>
           </div>
-          <p className="text-zinc-400 text-sm mb-1">
+          <p className="text-zinc-400 text-xs font-medium uppercase tracking-wider mb-1">
             {selectedCategory === "all" ? "Stock Total Registrado" : `Stock en ${selectedCategory}`}
           </p>
-          <h3 className="text-3xl font-bold text-white">
-            {loading ? "..." : reportData?.metrics.totalStockInMonth.toLocaleString() ?? 0}
-          </h3>
-          <p className="text-xs text-zinc-500 mt-2">Unidades registradas en ese período</p>
+          <div className="flex items-baseline gap-1.5">
+            <h3 className="text-3xl font-extrabold text-white tracking-tight">
+              {loading ? "..." : (reportData?.metrics.totalStockInMonth ?? 0).toLocaleString()}
+            </h3>
+            <span className="text-xs text-zinc-400 font-medium">unidades</span>
+          </div>
+          <p className="text-xs text-zinc-400 mt-2 flex items-center gap-1">
+            <span>Al corte de {currentMonthOption.label.split(" ")[0]}</span>
+          </p>
         </div>
 
-        <div className="bg-white/5 border border-white/10 backdrop-blur-sm rounded-3xl p-6 hover:border-white/20 transition-all">
+        {/* Tarjeta 2: Salidas Totales */}
+        <div className="relative overflow-hidden bg-gradient-to-b from-rose-500/10 via-white/5 to-transparent border border-rose-500/20 backdrop-blur-md rounded-3xl p-6 hover:border-rose-500/40 transition-all shadow-lg shadow-rose-500/5">
           <div className="flex justify-between items-start mb-4">
-            <div className="p-3 rounded-2xl bg-rose-500/10 text-rose-400">
+            <div className="w-12 h-12 rounded-2xl bg-rose-500/20 border border-rose-500/30 flex items-center justify-center text-rose-400">
               <PackageMinus className="w-6 h-6" />
             </div>
-            <span className="text-xs text-rose-400 font-mono">Total Salidas</span>
+            <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-rose-500/20 text-rose-300 border border-rose-500/30">
+              Salidas
+            </span>
           </div>
-          <p className="text-zinc-400 text-sm mb-1">Salidas en el Mes</p>
-          <h3 className="text-3xl font-bold text-rose-400">
-            {loading ? "..." : `-${reportData?.metrics.totalExitsInMonth.toLocaleString() ?? 0}`}
-          </h3>
-          <p className="text-xs text-zinc-500 mt-2">Préstamos y consumo combinados</p>
+          <p className="text-zinc-400 text-xs font-medium uppercase tracking-wider mb-1">
+            Salidas en el Mes
+          </p>
+          <div className="flex items-baseline gap-1.5">
+            <h3 className="text-3xl font-extrabold text-rose-400 tracking-tight">
+              {loading
+                ? "..."
+                : (reportData?.metrics.totalExitsInMonth ?? 0) > 0
+                ? `-${(reportData?.metrics.totalExitsInMonth ?? 0).toLocaleString()}`
+                : "0"}
+            </h3>
+            <span className="text-xs text-zinc-400 font-medium">despachos</span>
+          </div>
+          <p className="text-xs text-zinc-400 mt-2">
+            Préstamos y consumo combinados
+          </p>
         </div>
 
-        <div className="bg-white/5 border border-white/10 backdrop-blur-sm rounded-3xl p-6 hover:border-white/20 transition-all">
+        {/* Tarjeta 3: Préstamos */}
+        <div className="relative overflow-hidden bg-gradient-to-b from-purple-500/10 via-white/5 to-transparent border border-purple-500/20 backdrop-blur-md rounded-3xl p-6 hover:border-purple-500/40 transition-all shadow-lg shadow-purple-500/5">
           <div className="flex justify-between items-start mb-4">
-            <div className="p-3 rounded-2xl bg-purple-500/10 text-purple-400">
+            <div className="w-12 h-12 rounded-2xl bg-purple-500/20 border border-purple-500/30 flex items-center justify-center text-purple-400">
               <ClipboardList className="w-6 h-6" />
             </div>
-            <span className="text-xs text-purple-400 font-mono">Equipos</span>
+            <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+              Equipos
+            </span>
           </div>
-          <p className="text-zinc-400 text-sm mb-1">Préstamos en el Mes</p>
-          <h3 className="text-3xl font-bold text-purple-400">
-            {loading ? "..." : reportData?.metrics.totalLoansInMonth.toLocaleString() ?? 0}
-          </h3>
-          <p className="text-xs text-zinc-500 mt-2">Salidas retornables solicitadas</p>
+          <p className="text-zinc-400 text-xs font-medium uppercase tracking-wider mb-1">
+            Préstamos en el Mes
+          </p>
+          <div className="flex items-baseline gap-1.5">
+            <h3 className="text-3xl font-extrabold text-purple-400 tracking-tight">
+              {loading ? "..." : (reportData?.metrics.totalLoansInMonth ?? 0).toLocaleString()}
+            </h3>
+            <span className="text-xs text-zinc-400 font-medium">solicitudes</span>
+          </div>
+          <p className="text-xs text-zinc-400 mt-2">
+            Salidas retornables en el mes
+          </p>
         </div>
 
-        <div className="bg-white/5 border border-white/10 backdrop-blur-sm rounded-3xl p-6 hover:border-white/20 transition-all">
+        {/* Tarjeta 4: Consumo Interno */}
+        <div className="relative overflow-hidden bg-gradient-to-b from-amber-500/10 via-white/5 to-transparent border border-amber-500/20 backdrop-blur-md rounded-3xl p-6 hover:border-amber-500/40 transition-all shadow-lg shadow-amber-500/5">
           <div className="flex justify-between items-start mb-4">
-            <div className="p-3 rounded-2xl bg-amber-500/10 text-amber-400">
+            <div className="w-12 h-12 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
               <Activity className="w-6 h-6" />
             </div>
-            <span className="text-xs text-amber-400 font-mono">Suministros</span>
+            <span className="px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+              Suministros
+            </span>
           </div>
-          <p className="text-zinc-400 text-sm mb-1">Consumo Interno</p>
-          <h3 className="text-3xl font-bold text-amber-400">
-            {loading ? "..." : reportData?.metrics.totalConsumptionInMonth.toLocaleString() ?? 0}
-          </h3>
-          <p className="text-xs text-zinc-500 mt-2">Suministros gastados en el mes</p>
+          <p className="text-zinc-400 text-xs font-medium uppercase tracking-wider mb-1">
+            Consumo Local
+          </p>
+          <div className="flex items-baseline gap-1.5">
+            <h3 className="text-3xl font-extrabold text-amber-400 tracking-tight">
+              {loading ? "..." : (reportData?.metrics.totalConsumptionInMonth ?? 0).toLocaleString()}
+            </h3>
+            <span className="text-xs text-zinc-400 font-medium">artículos</span>
+          </div>
+          <p className="text-xs text-zinc-400 mt-2">
+            Gastados en uso operativo interno
+          </p>
         </div>
       </div>
 

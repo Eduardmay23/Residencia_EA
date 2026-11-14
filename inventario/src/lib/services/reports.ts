@@ -203,30 +203,26 @@ export async function getMonthlyCategoryReport(
 
     allProducts.forEach((p) => {
       const cat = p.category_name || 'Sin categoría';
-      const createdDate = new Date(p.created_at);
 
-      // Si el producto se creó después de fin de mes, en ese mes tenía 0
+      // Reconstrucción retrospectiva del stock al corte de ese mes
       let stockAtMonthEnd = p.stock || 0;
-      if (createdDate > endDate) {
-        stockAtMonthEnd = 0;
-      } else {
-        // Reversión de movimientos posteriores al mes seleccionado
-        allMovements.forEach((m) => {
-          if (m.product_id === p.id && new Date(m.date) > endDate) {
-            if (m.type === 'consumption') {
-              stockAtMonthEnd += m.quantity || 0;
-            } else if (m.type === 'addition') {
-              stockAtMonthEnd = Math.max(0, stockAtMonthEnd - (m.quantity || 0));
-            }
-          }
-        });
 
-        allLoans.forEach((l) => {
-          if (l.product_id === p.id && new Date(l.loan_date || l.created_at) > endDate) {
-            stockAtMonthEnd += l.quantity || 0;
+      // Reversión de movimientos posteriores a la fecha seleccionada
+      allMovements.forEach((m) => {
+        if (m.product_id === p.id && new Date(m.date) > endDate) {
+          if (m.type === 'consumption') {
+            stockAtMonthEnd += m.quantity || 0;
+          } else if (m.type === 'addition') {
+            stockAtMonthEnd = Math.max(0, stockAtMonthEnd - (m.quantity || 0));
           }
-        });
-      }
+        }
+      });
+
+      allLoans.forEach((l) => {
+        if (l.product_id === p.id && new Date(l.loan_date || l.created_at) > endDate) {
+          stockAtMonthEnd += l.quantity || 0;
+        }
+      });
 
       // Conteo de movimientos DENTRO del mes para este producto
       let loansCount = 0;
