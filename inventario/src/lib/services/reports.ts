@@ -1,19 +1,61 @@
 import { createClient } from '@/lib/supabase/client';
 
-export interface CategoryStat {
+export interface MonthOption {
+  key: string; // ej. "2026-11"
+  label: string; // ej. "Noviembre 2026 (Actual)"
+  year: number;
+  month: number; // 0-11
+}
+
+export interface CategorySummary {
   name: string;
-  count: number;
+  productsCount: number;
+  stockInMonth: number;
+  exitsInMonth: number;
+  loansInMonth: number;
+  consumptionInMonth: number;
   percentage: number;
   color: string;
 }
 
-export interface AuditLogItem {
+export interface ProductReportItem {
   id: string;
-  user: string;
-  action: string;
-  item: string;
+  name: string;
+  sku: string;
+  category: string;
+  stock: number;
+  loansInMonth: number;
+  consumptionInMonth: number;
+  image_url?: string | null;
+  status: 'ok' | 'warning' | 'danger';
+}
+
+export interface MovementReportItem {
+  id: string;
   date: string;
-  type: 'create' | 'update' | 'delete' | 'loan' | 'consume';
+  productName: string;
+  sku: string;
+  category: string;
+  type: 'loan' | 'consumption' | 'addition' | 'adjustment';
+  quantity: number;
+  user: string;
+  reason: string;
+}
+
+export interface MonthlyAnalysisReport {
+  selectedMonth: MonthOption;
+  selectedCategory: string; // "all" o nombre de categoría
+  availableCategories: string[];
+  metrics: {
+    totalStockInMonth: number;
+    totalExitsInMonth: number;
+    totalLoansInMonth: number;
+    totalConsumptionInMonth: number;
+    totalEntriesInMonth: number;
+  };
+  categoriesSummary: CategorySummary[];
+  products: ProductReportItem[];
+  movements: MovementReportItem[];
 }
 
 const CATEGORY_COLORS = [
@@ -24,72 +66,299 @@ const CATEGORY_COLORS = [
   'bg-rose-500',
   'bg-cyan-500',
   'bg-indigo-500',
+  'bg-teal-500',
 ];
 
-export async function getReportData(): Promise<{
-  categories: CategoryStat[];
-  logs: AuditLogItem[];
-}> {
+const MONTH_NAMES = [
+  'Enero',
+  'Febrero',
+  'Marzo',
+  'Abril',
+  'Mayo',
+  'Junio',
+  'Julio',
+  'Agosto',
+  'Septiembre',
+  'Octubre',
+  'Noviembre',
+  'Diciembre',
+];
+
+export function getAvailableMonths(count = 12): MonthOption[] {
+  const options: MonthOption[] = [];
+  const now = new Date();
+
+  for (let i = 0; i < count; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const year = d.getFullYear();
+    const month = d.getMonth();
+    const monthStr = String(month + 1).padStart(2, '0');
+    const key = `${year}-${monthStr}`;
+
+    let label = `${MONTH_NAMES[month]} ${year}`;
+    if (i === 0) label += ' (Mes Actual)';
+    else if (i === 1) label += ' (Hace 1 mes)';
+    else label += ` (Hace ${i} meses)`;
+
+    options.push({ key, label, year, month });
+  }
+
+  return options;
+}
+
+export async function getMonthlyCategoryReport(
+  monthKey: string,
+  selectedCategory = 'all'
+): Promise<MonthlyAnalysisReport> {
+  const months = getAvailableMonths(12);
+  const selectedMonth = months.find((m) => m.key === monthKey) || months[0];
+
+  const startDate = new Date(selectedMonth.year, selectedMonth.month, 1, 0, 0, 0);
+  const endDate = new Date(selectedMonth.year, selectedMonth.month + 1, 0, 23, 59, 59);
+
   try {
     const supabase = createClient();
 
-    const [productsRes, activitiesRes] = await Promise.all([
-      supabase.from('products').select('category_name'),
-      supabase.from('activities').select('*').order('created_at', { ascending: false }).limit(20),
+    // 1. Consultar productos, préstamos y movimientos en paralelo
+    const [productsRes, loansRes, movementsRes, categoriesRes] = await Promise.all([
+      supabase.from('products').select('*').order('name', { ascending: true }),
+      supabase
+        .from('loans')
+        .select('*, products(id, name, sku, category_name)')
+        .order('loan_date', { ascending: false }),
+      supabase
+        .from('movements')
+        .select('*, products(id, name, sku, category_name)')
+        .order('date', { ascending: false }),
+      supabase.from('categories').select('name').order('name', { ascending: true }),
     ]);
 
-    const products = productsRes.data || [];
-    const activities = activitiesRes.data || [];
-
-    // Calcular distribución por categorías
-    const catMap: Record<string, number> = {};
-    for (const p of products) {
-      const cat = p.category_name || 'Sin categoría';
-      catMap[cat] = (catMap[cat] || 0) + 1;
-    }
-
-    const totalProducts = products.length || 1;
-    const categories: CategoryStat[] = Object.entries(catMap).map(([name, count], index) => ({
-      name,
-      count,
-      percentage: Math.round((count / totalProducts) * 100),
-      color: CATEGORY_COLORS[index % CATEGORY_COLORS.length],
-    }));
-
-    // Formatear logs de actividades
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const logs: AuditLogItem[] = activities.map((act: any) => {
-      let action = 'registró';
-      let type: AuditLogItem['type'] = 'update';
+    const allProducts: any[] = productsRes.data || [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allLoans: any[] = loansRes.data || [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const allMovements: any[] = movementsRes.data || [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const dbCategories: any[] = categoriesRes.data || [];
 
-      if (act.type === 'loan_created') {
-        action = 'registró préstamo';
-        type = 'loan';
-      } else if (act.type === 'loan_returned') {
-        action = 'devolvió equipo';
-        type = 'update';
-      } else if (act.type === 'product_added') {
-        action = 'creó producto';
-        type = 'create';
-      } else if (act.type === 'stock_adjusted') {
-        action = 'ajustó existencia';
-        type = 'consume';
+    // Obtener lista única de categorías disponibles
+    const catSet = new Set<string>();
+    dbCategories.forEach((c) => catSet.add(c.name));
+    allProducts.forEach((p) => {
+      if (p.category_name) catSet.add(p.category_name);
+    });
+    const availableCategories = Array.from(catSet);
+
+    // 2. Filtrar movimientos y préstamos correspondientes al mes seleccionado
+    const movementsInMonth: MovementReportItem[] = [];
+
+    allLoans.forEach((l) => {
+      const loanDate = new Date(l.loan_date || l.created_at);
+      if (loanDate >= startDate && loanDate <= endDate) {
+        const prod = l.products || {};
+        const cat = prod.category_name || 'Sin categoría';
+
+        if (selectedCategory === 'all' || cat === selectedCategory) {
+          movementsInMonth.push({
+            id: l.id,
+            date: loanDate.toLocaleDateString(),
+            productName: prod.name || 'Artículo',
+            sku: prod.sku || 'N/A',
+            category: cat,
+            type: 'loan',
+            quantity: l.quantity || 1,
+            user: l.loaned_to || 'Usuario',
+            reason: `Préstamo de equipo (${l.status === 'active' ? 'En uso' : 'Devuelto'})`,
+          });
+        }
+      }
+    });
+
+    allMovements.forEach((m) => {
+      const movDate = new Date(m.date);
+      if (movDate >= startDate && movDate <= endDate) {
+        const prod = m.products || {};
+        const cat = prod.category_name || 'Sin categoría';
+
+        if (selectedCategory === 'all' || cat === selectedCategory) {
+          movementsInMonth.push({
+            id: m.id,
+            date: movDate.toLocaleDateString(),
+            productName: prod.name || 'Suministro',
+            sku: prod.sku || 'N/A',
+            category: cat,
+            type: m.type as 'consumption' | 'addition' | 'adjustment',
+            quantity: m.quantity || 1,
+            user: m.requested_by || 'Usuario',
+            reason: m.reason || 'Consumo local',
+          });
+        }
+      }
+    });
+
+    // 3. Reconstruir stock histórico al final de ese mes para cada producto
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const productStatsMap: Record<string, any> = {};
+
+    allProducts.forEach((p) => {
+      const cat = p.category_name || 'Sin categoría';
+      const createdDate = new Date(p.created_at);
+
+      // Si el producto se creó después de fin de mes, en ese mes tenía 0
+      let stockAtMonthEnd = p.stock || 0;
+      if (createdDate > endDate) {
+        stockAtMonthEnd = 0;
+      } else {
+        // Reversión de movimientos posteriores al mes seleccionado
+        allMovements.forEach((m) => {
+          if (m.product_id === p.id && new Date(m.date) > endDate) {
+            if (m.type === 'consumption') {
+              stockAtMonthEnd += m.quantity || 0;
+            } else if (m.type === 'addition') {
+              stockAtMonthEnd = Math.max(0, stockAtMonthEnd - (m.quantity || 0));
+            }
+          }
+        });
+
+        allLoans.forEach((l) => {
+          if (l.product_id === p.id && new Date(l.loan_date || l.created_at) > endDate) {
+            stockAtMonthEnd += l.quantity || 0;
+          }
+        });
       }
 
-      return {
-        id: act.id,
-        user: 'Administrador',
-        action,
-        item: act.details,
-        date: new Date(act.created_at).toLocaleString(),
-        type,
+      // Conteo de movimientos DENTRO del mes para este producto
+      let loansCount = 0;
+      let consumptionCount = 0;
+
+      allLoans.forEach((l) => {
+        if (l.product_id === p.id) {
+          const lDate = new Date(l.loan_date || l.created_at);
+          if (lDate >= startDate && lDate <= endDate) {
+            loansCount += l.quantity || 1;
+          }
+        }
+      });
+
+      allMovements.forEach((m) => {
+        if (m.product_id === p.id) {
+          const mDate = new Date(m.date);
+          if (mDate >= startDate && mDate <= endDate) {
+            if (m.type === 'consumption') consumptionCount += m.quantity || 1;
+          }
+        }
+      });
+
+      productStatsMap[p.id] = {
+        id: p.id,
+        name: p.name,
+        sku: p.sku,
+        category: cat,
+        stock: stockAtMonthEnd,
+        loansInMonth: loansCount,
+        consumptionInMonth: consumptionCount,
+        image_url: p.image_url,
+        status: stockAtMonthEnd === 0 ? 'danger' : stockAtMonthEnd < 5 ? 'warning' : 'ok',
       };
     });
 
-    return { categories, logs };
+    // 4. Filtrar productos según la categoría seleccionada
+    const productStatsList: ProductReportItem[] = Object.values(productStatsMap).filter(
+      (p) => selectedCategory === 'all' || p.category === selectedCategory
+    );
+
+    // 5. Agrupación y resumen por Categoría
+    const catGroup: Record<string, CategorySummary> = {};
+
+    Object.values(productStatsMap).forEach((p) => {
+      const cat = p.category;
+      if (!catGroup[cat]) {
+        catGroup[cat] = {
+          name: cat,
+          productsCount: 0,
+          stockInMonth: 0,
+          exitsInMonth: 0,
+          loansInMonth: 0,
+          consumptionInMonth: 0,
+          percentage: 0,
+          color: CATEGORY_COLORS[Object.keys(catGroup).length % CATEGORY_COLORS.length],
+        };
+      }
+      catGroup[cat].productsCount += 1;
+      catGroup[cat].stockInMonth += p.stock;
+      catGroup[cat].loansInMonth += p.loansInMonth;
+      catGroup[cat].consumptionInMonth += p.consumptionInMonth;
+      catGroup[cat].exitsInMonth += p.loansInMonth + p.consumptionInMonth;
+    });
+
+    const totalStockGlobal = Object.values(catGroup).reduce((acc, c) => acc + c.stockInMonth, 0) || 1;
+    Object.values(catGroup).forEach((c) => {
+      c.percentage = Math.round((c.stockInMonth / totalStockGlobal) * 100);
+    });
+
+    const categoriesSummary = Object.values(catGroup);
+
+    // 6. Métricas totales según filtro seleccionado
+    let totalStockInMonth = 0;
+    let totalLoansInMonth = 0;
+    let totalConsumptionInMonth = 0;
+    let totalEntriesInMonth = 0;
+
+    if (selectedCategory === 'all') {
+      totalStockInMonth = categoriesSummary.reduce((acc, c) => acc + c.stockInMonth, 0);
+      totalLoansInMonth = categoriesSummary.reduce((acc, c) => acc + c.loansInMonth, 0);
+      totalConsumptionInMonth = categoriesSummary.reduce((acc, c) => acc + c.consumptionInMonth, 0);
+    } else {
+      const targetCat = catGroup[selectedCategory];
+      if (targetCat) {
+        totalStockInMonth = targetCat.stockInMonth;
+        totalLoansInMonth = targetCat.loansInMonth;
+        totalConsumptionInMonth = targetCat.consumptionInMonth;
+      }
+    }
+
+    allMovements.forEach((m) => {
+      const movDate = new Date(m.date);
+      if (movDate >= startDate && movDate <= endDate && m.type === 'addition') {
+        const cat = m.products?.category_name || 'Sin categoría';
+        if (selectedCategory === 'all' || cat === selectedCategory) {
+          totalEntriesInMonth += m.quantity || 1;
+        }
+      }
+    });
+
+    return {
+      selectedMonth,
+      selectedCategory,
+      availableCategories,
+      metrics: {
+        totalStockInMonth,
+        totalExitsInMonth: totalLoansInMonth + totalConsumptionInMonth,
+        totalLoansInMonth,
+        totalConsumptionInMonth,
+        totalEntriesInMonth,
+      },
+      categoriesSummary,
+      products: productStatsList,
+      movements: movementsInMonth,
+    };
   } catch (err) {
-    console.warn('Error cargando datos de reporte:', err);
-    return { categories: [], logs: [] };
+    console.error('Error calculando reporte mensual por categoría:', err);
+    return {
+      selectedMonth,
+      selectedCategory,
+      availableCategories: [],
+      metrics: {
+        totalStockInMonth: 0,
+        totalExitsInMonth: 0,
+        totalLoansInMonth: 0,
+        totalConsumptionInMonth: 0,
+        totalEntriesInMonth: 0,
+      },
+      categoriesSummary: [],
+      products: [],
+      movements: [],
+    };
   }
 }
-
