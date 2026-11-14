@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/client";
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import { logActivity } from "@/lib/services/activity";
 import { UserProfile, Role } from "@/types";
 
 export interface CreateUserData {
@@ -58,12 +59,10 @@ export async function updateUserPermissions(
   }
 
   // Registrar auditoría
-  await supabase.from("activities").insert([
-    {
-      type: "product_updated",
-      details: `Permisos actualizados para usuario: ${data.full_name || data.email}`,
-    },
-  ]);
+  await logActivity(
+    "product_updated",
+    `Actualizó permisos de "${data.full_name || data.email}" (Rol: ${data.role}${data.can_delete ? ", puede eliminar" : ""})`
+  );
 
   return data as UserProfile;
 }
@@ -104,13 +103,10 @@ export async function createUserByAdmin(payload: CreateUserData): Promise<{ id: 
   }
 
   // Registrar auditoría con el cliente principal
-  const supabase = createClient();
-  await supabase.from("activities").insert([
-    {
-      type: "product_added",
-      details: `Nuevo usuario registrado: ${payload.fullName} (${payload.email}) con rol ${payload.role}`,
-    },
-  ]);
+  await logActivity(
+    "product_added",
+    `Registró al usuario "${payload.fullName}" (${payload.email}) con rol ${payload.role}`
+  );
 
   return { id: data.user.id, email: data.user.email || payload.email };
 }

@@ -23,6 +23,7 @@ export interface CategorySummary {
 export interface AuditLogItem {
   id: string;
   type: string;
+  actorName: string;
   details: string;
   date: string;
 }
@@ -129,8 +130,8 @@ export async function getMonthlyCategoryReport(
   try {
     const supabase = createClient();
 
-    // 1. Consultar productos, préstamos, movimientos, categorías y auditoría en paralelo
-    const [productsRes, loansRes, movementsRes, categoriesRes, activitiesRes] = await Promise.all([
+    // 1. Consultar productos, préstamos, movimientos, categorías, auditoría y usuarios en paralelo
+    const [productsRes, loansRes, movementsRes, categoriesRes, activitiesRes, profilesRes] = await Promise.all([
       supabase.from('products').select('*').order('name', { ascending: true }),
       supabase
         .from('loans')
@@ -147,6 +148,7 @@ export async function getMonthlyCategoryReport(
         .gte('created_at', startDate.toISOString())
         .lte('created_at', endDate.toISOString())
         .order('created_at', { ascending: false }),
+      supabase.from('user_profiles').select('id, full_name'),
     ]);
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -157,13 +159,29 @@ export async function getMonthlyCategoryReport(
     const allMovements: any[] = movementsRes.data || [];
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const dbCategories: any[] = categoriesRes.data || [];
+
+    const userNamesMap: Record<string, string> = {};
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const auditLogs: AuditLogItem[] = (activitiesRes.data || []).map((a: any) => ({
-      id: a.id,
-      type: a.type,
-      details: a.details,
-      date: new Date(a.created_at).toLocaleString('es-MX'),
-    }));
+    (profilesRes.data || []).forEach((u: any) => {
+      if (u.id && u.full_name) userNamesMap[u.id] = u.full_name;
+    });
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const auditLogs: AuditLogItem[] = (activitiesRes.data || []).map((a: any) => {
+      const rawDetails: string = a.details || '';
+      const dashIdx = rawDetails.indexOf(' — ');
+      const parsedActor = dashIdx > 0 ? rawDetails.slice(0, dashIdx).trim() : '';
+      const cleanDetails = dashIdx > 0 ? rawDetails.slice(dashIdx + 3).trim() : rawDetails;
+      const actorName = (a.user_id && userNamesMap[a.user_id]) || parsedActor || 'Sistema';
+
+      return {
+        id: a.id,
+        type: a.type,
+        actorName,
+        details: cleanDetails,
+        date: new Date(a.created_at).toLocaleString('es-MX'),
+      };
+    });
 
     // Obtener lista única de categorías disponibles
     const catSet = new Set<string>();

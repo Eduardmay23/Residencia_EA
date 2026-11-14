@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/client';
+import { logActivity } from '@/lib/services/activity';
 
 export interface DbLoanItem {
   id: string;
@@ -114,12 +115,11 @@ export async function createLoan(payload: {
     .eq('id', payload.productId);
 
   // Registrar actividad
-  await supabase.from('activities').insert([
-    {
-      type: 'loan_created',
-      details: `Se prestó ${payload.quantity}x ${prod.name} a ${payload.loanedTo} (autorizado por ${payload.deliveredBy})`,
-    },
-  ]);
+  await logActivity(
+    'loan_created',
+    `Registró préstamo de ${payload.quantity}x "${prod.name}" para ${payload.loanedTo}`,
+    payload.deliveredBy
+  );
 
   return loan;
 }
@@ -148,12 +148,10 @@ export async function returnLoan(loanId: string, productId: string, quantity: nu
       .update({ stock: newStock, loaned: newLoaned })
       .eq('id', productId);
 
-    await supabase.from('activities').insert([
-      {
-        type: 'loan_returned',
-        details: `Se devolvió ${quantity}x ${prod.name}`,
-      },
-    ]);
+    await logActivity(
+      'loan_returned',
+      `Procesó devolución de ${quantity}x "${prod.name}"`
+    );
   }
 }
 
@@ -244,12 +242,11 @@ export async function createConsumption(payload: {
   const newStock = Math.max(0, (prod.stock || 0) - payload.quantity);
   await supabase.from('products').update({ stock: newStock }).eq('id', payload.productId);
 
-  await supabase.from('activities').insert([
-    {
-      type: 'stock_adjusted',
-      details: `Consumo interno de ${payload.quantity}x ${prod.name} para ${payload.requestedBy} (despachado por ${payload.dispatchedBy})`,
-    },
-  ]);
+  await logActivity(
+    'stock_adjusted',
+    `Registró consumo interno de ${payload.quantity}x "${prod.name}" para ${payload.requestedBy}`,
+    payload.dispatchedBy
+  );
 
   return data;
 }
@@ -304,12 +301,10 @@ export async function deleteLoan(loanId: string, restoreStock: boolean = true): 
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const prodName = (loan?.products as any)?.name || 'Artículo';
-  await supabase.from('activities').insert([
-    {
-      type: 'stock_adjusted',
-      details: `Registro de préstamo eliminado: ${prodName} (a ${loan?.loaned_to || 'colaborador'})`,
-    },
-  ]);
+  await logActivity(
+    'stock_adjusted',
+    `Eliminó el préstamo de "${prodName}" (a ${loan?.loaned_to || 'colaborador'})`
+  );
 
   return true;
 }
@@ -359,12 +354,10 @@ export async function deleteConsumption(consumptionId: string, restoreStock: boo
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const prodName = (mov?.products as any)?.name || 'Suministro';
-  await supabase.from('activities').insert([
-    {
-      type: 'stock_adjusted',
-      details: `Registro de salida eliminado: ${prodName} (solicitado por ${mov?.requested_by || 'usuario'})`,
-    },
-  ]);
+  await logActivity(
+    'stock_adjusted',
+    `Eliminó el registro de salida de "${prodName}" (solicitado por ${mov?.requested_by || 'usuario'})`
+  );
 
   return true;
 }

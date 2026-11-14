@@ -16,6 +16,7 @@ import {
   Package2,
   Trash2,
   ShieldAlert,
+  User,
 } from "lucide-react";
 import Link from "next/link";
 import {
@@ -40,6 +41,8 @@ export default function Reportes() {
   const [selectedMonthKey, setSelectedMonthKey] = useState<string>(monthOptions[0].key);
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [distributionMode, setDistributionMode] = useState<"stock" | "exits">("stock");
+  const [selectedAuditUser, setSelectedAuditUser] = useState<string>("all");
+  const [selectedAuditType, setSelectedAuditType] = useState<string>("all");
 
   const [loading, setLoading] = useState(true);
   const [isDbConnected, setIsDbConnected] = useState(false);
@@ -765,37 +768,140 @@ export default function Reportes() {
         </table>
       </div>
 
-      {/* Bitácora de Auditoría del Sistema */}
-      <div className="bg-white/5 border border-white/10 backdrop-blur-md rounded-2xl overflow-hidden mt-8">
-        <div className="p-6 border-b border-white/10 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
-            <ShieldAlert className="w-5 h-5" />
-          </div>
-          <div>
-            <h2 className="text-xl font-bold">Auditoría de Acciones en {currentMonthOption.label}</h2>
-            <p className="text-sm text-zinc-400">
-              Registro de altas, ediciones, eliminaciones, préstamos y cambios de permisos.
-            </p>
-          </div>
-        </div>
+      {/* Bitácora de Auditoría de Usuarios del Sistema */}
+      {(() => {
+        const logs = reportData?.auditLogs || [];
+        const auditUsers = Array.from(new Set(logs.map((l) => l.actorName))).sort();
+        const filteredLogs = logs.filter((l) => {
+          const matchUser = selectedAuditUser === "all" || l.actorName === selectedAuditUser;
+          const matchType = selectedAuditType === "all" || l.type === selectedAuditType;
+          return matchUser && matchType;
+        });
 
-        {loading ? (
-          <div className="p-8 text-center text-zinc-500">Cargando bitácora de auditoría...</div>
-        ) : !reportData?.auditLogs || reportData.auditLogs.length === 0 ? (
-          <div className="p-8 text-center text-zinc-500 text-sm">
-            No hay eventos de auditoría registrados en este período.
-          </div>
-        ) : (
-          <div className="divide-y divide-white/5 max-h-80 overflow-y-auto">
-            {reportData.auditLogs.map((log) => (
-              <div key={log.id} className="px-6 py-3.5 flex items-center justify-between gap-4 hover:bg-white/5">
-                <p className="text-sm text-zinc-200">{log.details}</p>
-                <span className="text-xs text-zinc-500 font-mono shrink-0">{log.date}</span>
+        const getActionBadge = (type: string) => {
+          switch (type) {
+            case "product_added":
+              return { label: "Alta / Registro", cls: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" };
+            case "product_updated":
+              return { label: "Edición / Permisos", cls: "bg-blue-500/10 text-blue-400 border-blue-500/20" };
+            case "loan_created":
+              return { label: "Préstamo", cls: "bg-purple-500/10 text-purple-400 border-purple-500/20" };
+            case "loan_returned":
+              return { label: "Devolución", cls: "bg-cyan-500/10 text-cyan-400 border-cyan-500/20" };
+            default:
+              return { label: "Ajuste / Eliminación", cls: "bg-amber-500/10 text-amber-400 border-amber-500/20" };
+          }
+        };
+
+        return (
+          <div className="bg-white/5 border border-white/10 backdrop-blur-md rounded-2xl overflow-hidden mt-8">
+            <div className="p-6 border-b border-white/10 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                  <ShieldAlert className="w-5 h-5" />
+                </div>
+                <div>
+                  <h2 className="text-xl font-bold">
+                    Auditoría de Usuarios en {currentMonthOption.label}
+                  </h2>
+                  <p className="text-sm text-zinc-400">
+                    Quién ingresó productos, registró préstamos, editó stock, cambió permisos o eliminó registros.
+                  </p>
+                </div>
               </div>
-            ))}
+
+              <div className="flex flex-wrap items-center gap-2">
+                <select
+                  value={selectedAuditUser}
+                  onChange={(e) => setSelectedAuditUser(e.target.value)}
+                  className="bg-black/40 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none cursor-pointer"
+                >
+                  <option value="all" className="bg-zinc-900">
+                    Todos los usuarios
+                  </option>
+                  {auditUsers.map((u) => (
+                    <option key={u} value={u} className="bg-zinc-900">
+                      {u}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={selectedAuditType}
+                  onChange={(e) => setSelectedAuditType(e.target.value)}
+                  className="bg-black/40 border border-white/10 rounded-xl px-3 py-1.5 text-xs text-white focus:outline-none cursor-pointer"
+                >
+                  <option value="all" className="bg-zinc-900">
+                    Todas las acciones
+                  </option>
+                  <option value="product_added" className="bg-zinc-900">
+                    Altas / Registros
+                  </option>
+                  <option value="product_updated" className="bg-zinc-900">
+                    Ediciones / Permisos
+                  </option>
+                  <option value="loan_created" className="bg-zinc-900">
+                    Préstamos
+                  </option>
+                  <option value="loan_returned" className="bg-zinc-900">
+                    Devoluciones
+                  </option>
+                  <option value="stock_adjusted" className="bg-zinc-900">
+                    Ajustes / Eliminaciones
+                  </option>
+                </select>
+              </div>
+            </div>
+
+            {loading ? (
+              <div className="p-8 text-center text-zinc-500">Cargando bitácora de auditoría...</div>
+            ) : filteredLogs.length === 0 ? (
+              <div className="p-8 text-center text-zinc-500 text-sm">
+                No hay acciones de usuarios registradas para los filtros seleccionados.
+              </div>
+            ) : (
+              <div className="overflow-x-auto max-h-96 overflow-y-auto">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-white/5 border-b border-white/10 text-zinc-400 font-medium text-xs uppercase sticky top-0 backdrop-blur-md">
+                    <tr>
+                      <th className="px-6 py-3.5">Usuario</th>
+                      <th className="px-6 py-3.5">Acción</th>
+                      <th className="px-6 py-3.5">Detalle en el Sistema</th>
+                      <th className="px-6 py-3.5 text-right">Fecha y Hora</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {filteredLogs.map((log) => {
+                      const badge = getActionBadge(log.type);
+                      return (
+                        <tr key={log.id} className="hover:bg-white/5 transition-colors">
+                          <td className="px-6 py-3.5 whitespace-nowrap">
+                            <span className="inline-flex items-center gap-2 px-2.5 py-1 rounded-lg bg-white/5 border border-white/10 text-xs font-semibold text-white">
+                              <User className="w-3.5 h-3.5 text-blue-400" />
+                              {log.actorName}
+                            </span>
+                          </td>
+                          <td className="px-6 py-3.5 whitespace-nowrap">
+                            <span
+                              className={`px-2.5 py-1 rounded-full text-xs font-medium border ${badge.cls}`}
+                            >
+                              {badge.label}
+                            </span>
+                          </td>
+                          <td className="px-6 py-3.5 text-zinc-200">{log.details}</td>
+                          <td className="px-6 py-3.5 text-right text-xs text-zinc-500 font-mono whitespace-nowrap">
+                            {log.date}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
-        )}
-      </div>
+        );
+      })()}
 
       {/* Confirmación de eliminación */}
       <ConfirmDeleteModal

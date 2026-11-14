@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/client';
+import { logActivity } from '@/lib/services/activity';
 import { Product } from '@/types';
 
 export interface DbProduct {
@@ -96,12 +97,11 @@ export async function createProduct(payload: {
   }
 
   // Registrar auditoría
-  await supabase.from('activities').insert([
-    {
-      type: 'product_added',
-      details: `Nuevo producto registrado: ${payload.name} (SKU: ${payload.sku}, Stock inicial: ${payload.stock}) por ${actor}`,
-    },
-  ]);
+  await logActivity(
+    'product_added',
+    `Registró el producto "${payload.name}" (SKU: ${payload.sku}, Stock inicial: ${payload.stock})`,
+    payload.createdBy
+  );
 
   return mapDbProductToProduct(data as DbProduct);
 }
@@ -161,12 +161,11 @@ export async function updateProduct(
     }
   }
 
-  await supabase.from('activities').insert([
-    {
-      type: 'product_updated',
-      details: `Producto actualizado: ${payload.name} (SKU: ${payload.sku}, Stock: ${payload.stock}) por ${actor}`,
-    },
-  ]);
+  await logActivity(
+    'product_updated',
+    `Actualizó el producto "${payload.name}" (SKU: ${payload.sku}, Stock: ${payload.stock})`,
+    payload.updatedBy
+  );
 
   return mapDbProductToProduct(data as DbProduct);
 }
@@ -199,12 +198,10 @@ export async function deleteProduct(productId: string): Promise<boolean> {
 
   // 3. Registrar auditoría
   if (prod) {
-    await supabase.from('activities').insert([
-      {
-        type: 'stock_adjusted',
-        details: `Producto eliminado del catálogo: ${prod.name} (SKU: ${prod.sku})`,
-      },
-    ]);
+    await logActivity(
+      'stock_adjusted',
+      `Eliminó el producto "${prod.name}" (SKU: ${prod.sku}) del catálogo`
+    );
   }
 
   return true;

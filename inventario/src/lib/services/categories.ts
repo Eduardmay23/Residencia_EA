@@ -1,4 +1,5 @@
 import { createClient } from '@/lib/supabase/client';
+import { logActivity } from '@/lib/services/activity';
 import { Category } from '@/types';
 
 export async function getCategories(): Promise<Category[]> {
@@ -32,6 +33,8 @@ export async function createCategory(name: string, description?: string): Promis
     console.error('Error creating category:', error);
     throw error;
   }
+
+  await logActivity('product_added', `Creó la categoría "${name}"`);
   return data;
 }
 
